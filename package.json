@@ -1,0 +1,292 @@
+{
+  "name": "junkrat",
+  "displayName": "JunkRat - AI Phase Planner",
+  "description": "AI-powered phase planning tool supporting Ollama, Gemini, OpenRouter, and custom LLM providers for VS Code",
+  "version": "0.0.1",
+  "publisher": "junkrat-dev",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Programming Languages"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:junkrat.chatView",
+    "onView:junkrat.settingsHelper",
+    "onCommand:junkrat.openChat",
+    "onCommand:junkrat.openSettings",
+    "onCommand:junkrat.validateConfiguration",
+    "onCommand:junkrat.switchProvider",
+    "onCommand:junkrat.helloWorld"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "JunkRat",
+      "properties": {
+        "junkrat.activeProvider": {
+          "type": "string",
+          "enum": [
+            "ollama",
+            "gemini",
+            "openrouter",
+            "custom"
+          ],
+          "enumItemLabels": [
+            "Ollama (Local)",
+            "Google Gemini",
+            "OpenRouter",
+            "Custom OpenAI-Compatible"
+          ],
+          "markdownEnumDescriptions": [
+            "Local Ollama server for running open-weight models.",
+            "Official Google Gemini API. Requires API key.",
+            "OpenRouter API aggregator with multiple models.",
+            "Any OpenAI-compatible REST API endpoint."
+          ],
+          "default": "ollama",
+          "order": 1,
+          "markdownDescription": "Select the active AI provider for chat and phase planning.",
+          "scope": "window"
+        },
+        "junkrat.ollama.enabled": {
+          "type": "boolean",
+          "default": true,
+          "order": 10,
+          "markdownDescription": "Enable the Ollama provider."
+        },
+        "junkrat.ollama.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:11434",
+          "order": 11,
+          "markdownDescription": "Ollama server URL."
+        },
+        "junkrat.ollama.model": {
+          "type": "string",
+          "default": "llama3",
+          "order": 12,
+          "markdownDescription": "Default Ollama model."
+        },
+        "junkrat.ollama.timeout": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 5000,
+          "order": 13,
+          "markdownDescription": "Request timeout in milliseconds."
+        },
+        "junkrat.ollama.maxRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "order": 14,
+          "markdownDescription": "Number of retry attempts for failed requests."
+        },
+        "junkrat.gemini.enabled": {
+          "type": "boolean",
+          "default": false,
+          "order": 20,
+          "markdownDescription": "Enable the Gemini provider."
+        },
+        "junkrat.gemini.apiKey": {
+          "type": "string",
+          "default": "",
+          "order": 21,
+          "markdownDescription": "Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey).",
+          "scope": "machine-overridable",
+          "ignoreSync": true
+        },
+        "junkrat.gemini.model": {
+          "type": "string",
+          "default": "gemini-2.0-flash-exp",
+          "order": 22,
+          "markdownDescription": "Default Gemini model."
+        },
+        "junkrat.gemini.timeout": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 5000,
+          "order": 23,
+          "markdownDescription": "Request timeout in milliseconds."
+        },
+        "junkrat.gemini.maxRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "order": 24,
+          "markdownDescription": "Number of retry attempts for failed requests."
+        },
+        "junkrat.openrouter.enabled": {
+          "type": "boolean",
+          "default": false,
+          "order": 30,
+          "markdownDescription": "Enable the OpenRouter provider."
+        },
+        "junkrat.openrouter.apiKey": {
+          "type": "string",
+          "default": "",
+          "order": 31,
+          "markdownDescription": "OpenRouter API key from [openrouter.ai/keys](https://openrouter.ai/keys).",
+          "scope": "machine-overridable",
+          "ignoreSync": true
+        },
+        "junkrat.openrouter.model": {
+          "type": "string",
+          "default": "openai/gpt-4o",
+          "order": 32,
+          "markdownDescription": "Default OpenRouter model."
+        },
+        "junkrat.openrouter.timeout": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 5000,
+          "order": 33,
+          "markdownDescription": "Request timeout in milliseconds."
+        },
+        "junkrat.openrouter.maxRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "order": 34,
+          "markdownDescription": "Number of retry attempts for failed requests."
+        },
+        "junkrat.custom.enabled": {
+          "type": "boolean",
+          "default": false,
+          "order": 40,
+          "markdownDescription": "Enable the custom OpenAI-compatible provider."
+        },
+        "junkrat.custom.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:8080/v1",
+          "order": 41,
+          "markdownDescription": "Custom provider base URL."
+        },
+        "junkrat.custom.apiKey": {
+          "type": "string",
+          "default": "",
+          "order": 42,
+          "markdownDescription": "Custom provider API key (optional).",
+          "scope": "machine-overridable",
+          "ignoreSync": true
+        },
+        "junkrat.custom.model": {
+          "type": "string",
+          "default": "gpt-3.5-turbo",
+          "order": 43,
+          "markdownDescription": "Default model name."
+        },
+        "junkrat.custom.timeout": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 5000,
+          "order": 44,
+          "markdownDescription": "Request timeout in milliseconds."
+        },
+        "junkrat.custom.maxRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "order": 45,
+          "markdownDescription": "Number of retry attempts for failed requests."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "junkrat-sidebar",
+          "title": "JunkRat",
+          "icon": "resources/dark/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "junkrat-sidebar": [
+        {
+          "id": "junkrat.chatView",
+          "name": "AI Chat",
+          "type": "webview",
+          "contextualTitle": "JunkRat Chat"
+        },
+        {
+          "id": "junkrat.settingsHelper",
+          "name": "Configuration",
+          "type": "webview",
+          "contextualTitle": "JunkRat Configuration Helper"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "junkrat.helloWorld",
+        "title": "JunkRat: Hello World"
+      },
+      {
+        "command": "junkrat.openChat",
+        "title": "JunkRat: Open Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "junkrat.openSettings",
+        "title": "JunkRat: Open Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "junkrat.validateConfiguration",
+        "title": "JunkRat: Validate Configuration",
+        "icon": "$(check)"
+      },
+      {
+        "command": "junkrat.switchProvider",
+        "title": "JunkRat: Switch Provider",
+        "icon": "$(arrow-swap)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "junkrat.openSettings",
+          "when": "view == junkrat.settingsHelper",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext ts"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.36"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.x",
+    "@typescript-eslint/parser": "^6.x",
+    "esbuild": "^0.19.x",
+    "eslint": "^8.x",
+    "typescript": "^5.3.x"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/junkrat-dev/junkrat"
+  },
+  "license": "MIT",
+  "keywords": [
+    "ai",
+    "planning",
+    "ollama",
+    "llm",
+    "chat",
+    "gemini",
+    "openrouter",
+    "code-generation",
+    "openai"
+  ]
+}

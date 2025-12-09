@@ -25,6 +25,56 @@ export function getChatStyles(): string {
       overflow: hidden;
     }
 
+    /* Chat Header */
+    .chat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background-color: var(--vscode-sideBarSectionHeader-background);
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+
+    .header-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .header-title .codicon {
+      font-size: 18px;
+      color: var(--vscode-symbolIcon-functionForeground);
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .header-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--vscode-foreground);
+      cursor: pointer;
+      transition: background-color 0.15s;
+    }
+
+    .header-btn:hover {
+      background-color: var(--vscode-toolbar-hoverBackground);
+    }
+
+    .header-btn .codicon {
+      font-size: 16px;
+    }
+
     .messages-container {
       flex-grow: 1;
       overflow-y: auto;

@@ -48,6 +48,9 @@ export function getChatScript(): string {
       const messageInput = document.getElementById('message-input');
       const sendButton = document.getElementById('send-button');
       const emptyState = document.getElementById('empty-state');
+      const newChatBtn = document.getElementById('new-chat-btn');
+      const historyBtn = document.getElementById('history-btn');
+      const clearChatBtn = document.getElementById('clear-chat-btn');
       const providerSelect = document.getElementById('provider-select');
       const providerStatus = document.getElementById('provider-status');
       const settingsButton = document.getElementById('provider-settings-button');
@@ -781,6 +784,28 @@ export function getChatScript(): string {
             type: 'selectModel',
             payload: { modelName: selectedModel }
           });
+        });
+      }
+
+      // Header button event listeners
+      if (newChatBtn) {
+        newChatBtn.addEventListener('click', () => {
+          vscode.postMessage({ type: 'newChat', payload: {} });
+        });
+      }
+
+      if (historyBtn) {
+        historyBtn.addEventListener('click', () => {
+          vscode.postMessage({ type: 'showHistory', payload: {} });
+        });
+      }
+
+      if (clearChatBtn) {
+        clearChatBtn.addEventListener('click', () => {
+          if (confirm('Clear all messages?')) {
+            clearMessages();
+            vscode.postMessage({ type: 'clearChat', payload: {} });
+          }
         });
       }
       

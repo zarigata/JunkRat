@@ -648,6 +648,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div class="chat-container">
+    <div class="chat-header">
+      <div class="header-title">
+        <span class="codicon codicon-hubot"></span>
+        <span>JunkRat</span>
+      </div>
+      <div class="header-actions">
+        <button class="header-btn" id="new-chat-btn" title="New Chat">
+          <span class="codicon codicon-add"></span>
+        </button>
+        <button class="header-btn" id="history-btn" title="Chat History">
+          <span class="codicon codicon-history"></span>
+        </button>
+        <button class="header-btn" id="clear-chat-btn" title="Clear Chat">
+          <span class="codicon codicon-trash"></span>
+        </button>
+      </div>
+    </div>
     <div class="provider-selector">
       <span class="provider-selector-label">AI Provider:</span>
       <select id="provider-select"></select>
@@ -667,9 +684,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     </div>
     <div class="messages-container" id="messages-container">
       <div class="empty-state" id="empty-state">
-        <div class="codicon codicon-comment-discussion"></div>
-        <p><strong>Welcome to JunkRat AI Chat</strong></p>
-        <p>Start a conversation to plan your coding phases</p>
+        <div class="codicon codicon-hubot" style="font-size: 48px; margin-bottom: 12px;"></div>
+        <p><strong>Welcome to JunkRat AI</strong></p>
+        <p>Plan your coding projects with AI assistance</p>
       </div>
     </div>
     <div class="input-container">

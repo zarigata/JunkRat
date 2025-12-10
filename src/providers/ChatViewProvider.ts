@@ -334,7 +334,59 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'executeTaskInGeminiCLI':
         await this._handleExecuteTaskInGeminiCLI(message.payload.task, message.payload.phaseTitle);
         break;
+
+      case 'newChat':
+        await this._handleNewChat();
+        break;
+
+      case 'clearChat':
+        await this._handleClearChat();
+        break;
+
+      case 'showHistory':
+        await this._handleShowHistory();
+        break;
     }
+  }
+
+  /**
+   * Start a new chat conversation
+   */
+  private async _handleNewChat(): Promise<void> {
+    // Clear current conversation in chat service
+    this._chatService.clearHistory();
+
+    // Notify webview to clear messages
+    this.sendMessageToWebview({
+      type: 'clearChat',
+      payload: {},
+    });
+
+    // Reset conversation state
+    this._sendConversationState();
+
+    vscode.window.showInformationMessage('Started new conversation.');
+  }
+
+  /**
+   * Clear current chat messages
+   */
+  private async _handleClearChat(): Promise<void> {
+    this._chatService.clearHistory();
+
+    this.sendMessageToWebview({
+      type: 'clearChat',
+      payload: {},
+    });
+
+    this._sendConversationState();
+  }
+
+  /**
+   * Show conversation history (placeholder - can be expanded)
+   */
+  private async _handleShowHistory(): Promise<void> {
+    vscode.window.showInformationMessage('Chat history feature coming soon!');
   }
 
   /**

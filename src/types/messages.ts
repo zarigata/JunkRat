@@ -227,6 +227,71 @@ export interface PhaseDeletedMessage {
   };
 }
 
+export interface TriggerPhaseGenerationMessage {
+  type: 'triggerPhaseGeneration';
+}
+
+
+
+export interface VerifyAllPhasesMessage {
+  type: 'verifyAllPhases';
+}
+
+export interface RequestPhaseProgressMessage {
+  type: 'requestPhaseProgress';
+}
+
+export interface RetryLastRequestMessage {
+  type: 'retryLastRequest';
+}
+
+export interface SwitchProviderAndRetryMessage {
+  type: 'switchProviderAndRetry';
+  payload: {
+    providerId: string;
+  };
+}
+
+export interface RefreshModelsMessage {
+  type: 'refreshModels';
+  payload: {
+    providerId?: string;
+  };
+}
+
+export interface NextActionSuggestionsMessage {
+  type: 'nextActionSuggestions';
+  payload: {
+    suggestions: string[];
+  };
+}
+
+export interface NoProvidersReadyMessage {
+  type: 'noProvidersReady';
+  payload: {
+    message: string;
+    showOnboarding: boolean;
+  };
+}
+
+export interface TestOllamaConnectionMessage {
+  type: 'testOllamaConnection';
+}
+
+export interface OpenExternalLinkMessage {
+  type: 'openExternalLink';
+  payload: {
+    url: string;
+  };
+}
+
+export interface ExportAllConversationsMessage {
+  type: 'exportAllConversations';
+  payload: {
+    format: 'json' | 'markdown';
+  };
+}
+
 export type WebviewMessage =
   | SendMessageMessage
   | ReadyMessage
@@ -259,7 +324,18 @@ export type WebviewMessage =
   | HandoffPlanToToolMessage
   | AddPhaseMessage
   | EditPhaseMessage
-  | DeletePhaseMessage;
+
+  | DeletePhaseMessage
+  | TriggerPhaseGenerationMessage
+  | VerifyAllPhasesMessage
+  | VerifyAllPhasesMessage
+  | RequestPhaseProgressMessage
+  | RetryLastRequestMessage
+  | SwitchProviderAndRetryMessage
+  | RefreshModelsMessage
+  | TestOllamaConnectionMessage
+  | OpenExternalLinkMessage
+  | ExportAllConversationsMessage;
 
 export interface ExecuteTaskInGeminiCLIMessage {
   type: 'executeTaskInGeminiCLI';
@@ -315,6 +391,15 @@ export interface ErrorMessage {
   type: 'error';
   payload: {
     error: string;
+    errorType?: 'network' | 'timeout' | 'rate_limit' | 'invalid_request' | 'api_error' | 'model_not_found' | 'provider_unavailable';
+    retryable: boolean;
+    failedProvider?: string;
+    suggestedActions?: Array<{
+      action: 'retry' | 'switchProvider' | 'refreshModels' | 'openSettings';
+      label: string;
+      providerId?: string; // For switchProvider action
+    }>;
+    details?: string; // Technical details for debugging
   };
 }
 
@@ -488,7 +573,21 @@ export type ExtensionMessage =
   | PhaseStatusUpdatedMessage
   | PhaseAddedMessage
   | PhaseEditedMessage
-  | PhaseDeletedMessage;
+  | PhaseEditedMessage
+  | PhaseDeletedMessage
+  | PhaseDeletedMessage
+  | PhaseProgressMessage
+  | NoProvidersReadyMessage
+  | NextActionSuggestionsMessage;
+
+export interface PhaseProgressMessage {
+  type: 'phaseProgress';
+  payload: {
+    completed: number;
+    verified: number;
+    total: number;
+  };
+}
 
 // Helper types
 export interface ChatMessage {

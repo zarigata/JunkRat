@@ -1,5 +1,7 @@
 import { ProviderRegistry } from '../providers/ProviderRegistry';
 import { ChatRequest } from '../types/provider';
+import { retry } from '../utils/retry';
+import { AIError, isRetryableError } from '../types/errors';
 import {
   Conversation,
   ConversationState,
@@ -12,6 +14,10 @@ import { AgentService } from './AgentService';
 
 export class ChatService {
   private _registry: ProviderRegistry;
+
+  get registry(): ProviderRegistry {
+    return this._registry;
+  }
   private _conversationHistory: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
   private _currentAbortController: AbortController | undefined;
   private _conversationManager: ConversationManager | undefined;
@@ -42,58 +48,92 @@ export class ChatService {
       return result.response;
     }
 
-    try {
-      // Add user message to history
-      this._conversationHistory.push({ role: 'user', content: userMessage });
+    // Add user message to history
+    this._conversationHistory.push({ role: 'user', content: userMessage });
 
-      // Get provider
-      const provider = this._registry.getProvider(providerId);
+    const attemptedProviders = new Set<string>();
+    let currentProviderId = providerId;
+
+    while (true) {
+      let provider = this._registry.getProvider(currentProviderId);
+
       if (!provider) {
-        throw new Error('No AI provider available');
-      }
+        if (currentProviderId) attemptedProviders.add(currentProviderId);
 
-      // Create abort controller for cancellation support
-      this._currentAbortController = new AbortController();
-
-      // Build request
-      const request: ChatRequest = {
-        messages: [...this._conversationHistory],
-        model: undefined,
-        temperature: undefined,
-        maxTokens: undefined,
-        stream: false,
-        signal: this._currentAbortController.signal,
-      };
-
-      // Call provider
-      const response = await provider.chat(request);
-
-      // Check for agent commands in response (simple heuristic for now)
-      // In a real implementation, we'd use a more robust parsing or tool calling API
-      if (response.content.includes('EXECUTE_COMMAND:')) {
-        const commandMatch = response.content.match(/EXECUTE_COMMAND:\s*(.*)/);
-        if (commandMatch) {
-          const command = commandMatch[1].trim();
-          try {
-            await this._agentService.executeCommand(command);
-            this._conversationHistory.push({ role: 'system', content: `Command executed successfully: ${command}` });
-          } catch (err) {
-            this._conversationHistory.push({ role: 'system', content: `Command execution failed: ${(err as Error).message}` });
-          }
+        provider = this._registry.getNextAvailableProvider(Array.from(attemptedProviders));
+        if (!provider) {
+          throw new Error('No AI provider available');
         }
+        currentProviderId = provider.id;
       }
 
-      // Add assistant response to history
-      this._conversationHistory.push({ role: 'assistant', content: response.content });
+      attemptedProviders.add(provider.id);
 
-      // Clean up abort controller
-      this._currentAbortController = undefined;
+      try {
+        return await retry(async () => {
+          try {
+            // Create abort controller for cancellation support
+            this._currentAbortController = new AbortController();
 
-      return response.content;
-    } catch (error) {
-      // Clean up abort controller on error
-      this._currentAbortController = undefined;
-      throw error;
+            // Build request
+            const request: ChatRequest = {
+              messages: [...this._conversationHistory],
+              model: undefined,
+              temperature: undefined,
+              maxTokens: undefined,
+              stream: false,
+              signal: this._currentAbortController.signal,
+            };
+
+            // Call provider
+            const response = await provider!.chat(request);
+
+            // Check for agent commands in response (simple heuristic for now)
+            if (response.content.includes('EXECUTE_COMMAND:')) {
+              const commandMatch = response.content.match(/EXECUTE_COMMAND:\s*(.*)/);
+              if (commandMatch) {
+                const command = commandMatch[1].trim();
+                try {
+                  await this._agentService.executeCommand(command);
+                  this._conversationHistory.push({ role: 'system', content: `Command executed successfully: ${command}` });
+                } catch (err) {
+                  this._conversationHistory.push({ role: 'system', content: `Command execution failed: ${(err as Error).message}` });
+                }
+              }
+            }
+
+            // Add assistant response to history
+            this._conversationHistory.push({ role: 'assistant', content: response.content });
+
+            // Clean up abort controller
+            this._currentAbortController = undefined;
+
+            return response.content;
+          } catch (error) {
+            // Clean up abort controller on error
+            this._currentAbortController = undefined;
+            throw error;
+          }
+        }, {
+          maxRetries: 3,
+          initialDelayMs: 1000,
+          maxDelayMs: 10000,
+          factor: 2,
+          jitter: true,
+          shouldRetry: (error) => isRetryableError(error),
+          onRetry: (attempt, delay, error) => {
+            console.log(`Retrying request (attempt ${attempt}) after ${delay}ms due to: ${error}`);
+          }
+        });
+      } catch (error) {
+        console.warn(`Provider ${currentProviderId} failed:`, error);
+
+        const nextProvider = this._registry.getNextAvailableProvider(Array.from(attemptedProviders));
+        if (!nextProvider) {
+          throw error;
+        }
+        currentProviderId = nextProvider.id;
+      }
     }
   }
 
@@ -107,54 +147,90 @@ export class ChatService {
       return this.sendMessage(userMessage, providerId);
     }
 
-    let accumulatedContent = '';
+    // Add user message to history
+    this._conversationHistory.push({ role: 'user', content: userMessage });
 
-    try {
-      // Add user message to history
-      this._conversationHistory.push({ role: 'user', content: userMessage });
+    const attemptedProviders = new Set<string>();
+    let currentProviderId = providerId;
+    let hasReceivedData = false;
 
-      // Get provider
-      const provider = this._registry.getProvider(providerId);
+    while (true) {
+      let provider = this._registry.getProvider(currentProviderId);
+
       if (!provider) {
-        throw new Error('No AI provider available');
+        if (currentProviderId) attemptedProviders.add(currentProviderId);
+
+        provider = this._registry.getNextAvailableProvider(Array.from(attemptedProviders));
+        if (!provider) {
+          throw new Error('No AI provider available');
+        }
+        currentProviderId = provider.id;
       }
 
-      // Create abort controller for cancellation support
-      this._currentAbortController = new AbortController();
+      attemptedProviders.add(provider.id);
 
-      // Build request
-      const request: ChatRequest = {
-        messages: [...this._conversationHistory],
-        model: undefined,
-        temperature: undefined,
-        maxTokens: undefined,
-        stream: true,
-        signal: this._currentAbortController.signal,
-      };
+      try {
+        return await retry(async () => {
+          let accumulatedContent = '';
+          hasReceivedData = false;
 
-      // Stream the response
-      for await (const chunk of provider.streamChat(request)) {
-        if (chunk.delta) {
-          accumulatedContent += chunk.delta;
-          await onChunk(chunk.delta);
+          try {
+            // Create abort controller for cancellation support
+            this._currentAbortController = new AbortController();
+
+            // Build request
+            const request: ChatRequest = {
+              messages: [...this._conversationHistory],
+              model: undefined,
+              temperature: undefined,
+              maxTokens: undefined,
+              stream: true,
+              signal: this._currentAbortController.signal,
+            };
+
+            // Stream the response
+            for await (const chunk of provider!.streamChat(request)) {
+              hasReceivedData = true;
+              if (chunk.delta) {
+                accumulatedContent += chunk.delta;
+                await onChunk(chunk.delta);
+              }
+
+              if (chunk.done) {
+                break;
+              }
+            }
+
+            // Add complete assistant response to history
+            this._conversationHistory.push({ role: 'assistant', content: accumulatedContent });
+
+            // Clean up abort controller
+            this._currentAbortController = undefined;
+
+            return accumulatedContent;
+          } catch (error) {
+            // Clean up abort controller on error
+            this._currentAbortController = undefined;
+            throw error;
+          }
+        }, {
+          maxRetries: 3,
+          initialDelayMs: 1000,
+          maxDelayMs: 10000,
+          shouldRetry: (error) => !hasReceivedData && isRetryableError(error),
+          onRetry: (attempt, delay, error) => {
+            console.log(`Retrying streaming request (attempt ${attempt}) after ${delay}ms due to: ${error}`);
+          }
+        });
+      } catch (error) {
+        console.warn(`Provider ${currentProviderId} failed:`, error);
+
+        const nextProvider = this._registry.getNextAvailableProvider(Array.from(attemptedProviders));
+        if (!nextProvider) {
+          throw error;
         }
-
-        if (chunk.done) {
-          break;
-        }
+        currentProviderId = nextProvider.id;
       }
-
-      // Add complete assistant response to history
-      this._conversationHistory.push({ role: 'assistant', content: accumulatedContent });
-
-      // Clean up abort controller
-      this._currentAbortController = undefined;
-
-      return accumulatedContent;
-    } catch (error) {
-      // Clean up abort controller on error
-      this._currentAbortController = undefined;
-      throw error;
     }
   }
 
@@ -293,6 +369,14 @@ export class ChatService {
     await this._conversationManager.exportPhasePlan(conversationId, format);
   }
 
+  async exportAllConversations(format: 'json' | 'markdown'): Promise<void> {
+    if (!this._useConversationManager || !this._conversationManager) {
+      throw new Error('Conversation manager not enabled');
+    }
+
+    await this._conversationManager.exportAllConversations(format);
+  }
+
   async renameConversation(conversationId: string, newTitle: string): Promise<void> {
     if (!this._useConversationManager || !this._conversationManager) {
       throw new Error('Conversation manager not enabled');
@@ -363,5 +447,13 @@ export class ChatService {
     }
 
     return this._conversationManager.deletePhase(targetConversationId, phaseId);
+  }
+
+  transitionState(conversationId: string, newState: ConversationState): void {
+    if (!this._useConversationManager || !this._conversationManager) {
+      throw new Error('Conversation manager not enabled');
+    }
+
+    this._conversationManager.transitionState(conversationId, newState);
   }
 }

@@ -47,6 +47,7 @@ export function getChatScript(): string {
       const messagesContainer = document.getElementById('messages-container');
       const messageInput = document.getElementById('message-input');
       const sendButton = document.getElementById('send-button');
+      const onboardingWizard = document.getElementById('onboarding-wizard');
       const emptyState = document.getElementById('empty-state');
       const newChatBtn = document.getElementById('new-chat-btn');
       const historyBtn = document.getElementById('history-btn');
@@ -76,9 +77,73 @@ export function getChatScript(): string {
       /**
        * Renders a message in the chat interface
        */
+      function renderErrorMessage(payload) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'message error';
+        
+        let icon = 'error';
+        if (payload.errorType === 'network') icon = 'globe';
+        else if (payload.errorType === 'timeout') icon = 'watch';
+        else if (payload.errorType === 'rate_limit') icon = 'dashboard';
+        else if (payload.errorType === 'model_not_found') icon = 'search';
+        
+        let html = \`
+          <div class="error-header">
+            <span class="codicon codicon-\${icon}"></span>
+            <strong>Error: \${payload.errorType ? payload.errorType.replace('_', ' ') : 'Unknown Error'}</strong>
+          </div>
+          <div class="error-body">\${payload.error}</div>
+        \`;
+        
+        if (payload.details) {
+          html += \`<div class="error-details">\${payload.details}</div>\`;
+        }
+        
+        if (payload.suggestedActions && payload.suggestedActions.length > 0) {
+          html += '<div class="error-actions">';
+          payload.suggestedActions.forEach(action => {
+            html += \`
+              <button class="error-action-btn" 
+                      data-action="\${action.action}" 
+                      \${action.providerId ? 'data-provider-id="' + action.providerId + '"' : ''}>
+                \${action.label}
+              </button>
+            \`;
+          });
+          html += '</div>';
+        }
+        
+        errorDiv.innerHTML = html;
+        messagesContainer.appendChild(errorDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        
+        // Add to messages array for persistence (simplification)
+        messages.push({
+           id: Date.now().toString(),
+           role: 'assistant',
+           text: payload.error, // Fallback text
+           isError: true,
+           payload: payload,
+           timestamp: Date.now()
+        });
+      }
+
       function renderMessage(message) {
+        // ... existing renderMessage logic ...
+        if (message.isError && message.payload) {
+             // If re-rendering history and it was an error
+             // We might need special handling or just render text as fallback
+             // For now, let's just let it fall through or specifically handle it
+             // Actually, regular renderMessage handles text.
+             // But we want the rich UI. 
+             // Ideally we shouldn't push full error objects to 'messages' array if we want persistence of rich UI.
+             // But for this task, we just render it.
+        }
+
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message ' + message.role;
+        
+        // ... (rest of renderMessage)
         
         const textDiv = document.createElement('div');
         textDiv.className = 'message-text';
@@ -99,6 +164,7 @@ export function getChatScript(): string {
         if (emptyState) {
           emptyState.style.display = 'none';
         }
+        hideOnboardingWizard(); // Hide onboarding if messages arrive (e.g. from history)
       }
 
       function removeExistingPhasePlan() {
@@ -115,25 +181,93 @@ export function getChatScript(): string {
       }
 
       const stateLabelMap = {
-        IDLE: 'Idle',
-        GATHERING_REQUIREMENTS: 'Gathering requirements',
-        ANALYZING_REQUIREMENTS: 'Analyzing requirements',
-        GENERATING_PHASES: 'Generating phase plan',
-        COMPLETE: 'Complete',
-        ERROR: 'Error',
+        IDLE: 'Ready to vibe',
+        GATHERING_REQUIREMENTS: 'Gathering the deets',
+        ANALYZING_REQUIREMENTS: 'Cooking up the plan',
+        GENERATING_PHASES: 'Generating epic phases',
+        COMPLETE: 'Ready for lift-off 🚀',
+        ERROR: 'Vibe check failed',
       };
 
       const stateIconMap = {
-        IDLE: 'debug-pause',
-        GATHERING_REQUIREMENTS: 'question',
-        ANALYZING_REQUIREMENTS: 'comment-discussion',
-        GENERATING_PHASES: 'loading',
-        COMPLETE: 'check',
-        ERROR: 'error',
+        IDLE: 'circle-outline',
+        GATHERING_REQUIREMENTS: 'comment-discussion',
+        ANALYZING_REQUIREMENTS: 'beaker',
+        GENERATING_PHASES: 'rocket',
+        COMPLETE: 'check-all',
+        ERROR: 'warning',
       };
 
       function getStateBadgeClass(state) {
         return 'conversation-state-badge conversation-state-' + state.toLowerCase();
+      }
+
+      function renderWorkflowButtons(state) {
+        const container = document.getElementById('workflow-actions-container');
+        if (!container) return;
+
+        container.innerHTML = '';
+        container.style.display = 'none';
+
+        const buttons = [];
+
+        if (state === 'GATHERING_REQUIREMENTS') {
+            buttons.push({
+                text: 'Ready to Generate Phases? 🚀',
+                icon: 'rocket',
+                className: 'primary',
+                onClick: () => {
+                    vscode.postMessage({ type: 'triggerPhaseGeneration' });
+                }
+            });
+        } else if (state === 'COMPLETE') {
+            buttons.push({
+                text: 'Regenerate Plan 🔄',
+                icon: 'sync',
+                className: 'secondary',
+                onClick: () => {
+                     showConfirmDialog('Regenerate Plan', 'This will overwrite the current plan. Continue?', 'Regenerate', () => {
+                        vscode.postMessage({ type: 'regeneratePhasePlan', payload: { conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined } });
+                     });
+                }
+            });
+            buttons.push({
+                text: 'Verify All Phases ✅',
+                icon: 'check-all',
+                className: 'primary',
+                onClick: () => {
+                    vscode.postMessage({ type: 'verifyAllPhases' });
+                }
+            });
+        }
+
+        if (buttons.length > 0) {
+            container.style.display = 'flex';
+            buttons.forEach(btn => {
+                const button = document.createElement('button');
+                button.className = 'workflow-action-btn ' + (btn.className || '');
+                button.innerHTML = '<span class="codicon codicon-' + btn.icon + '"></span>' + btn.text;
+                button.onclick = btn.onClick;
+                container.appendChild(button);
+            });
+        }
+      }
+
+      function updateProgressBar(completed, verified, total) {
+        const container = document.getElementById('phase-progress-bar');
+        const fill = document.getElementById('progress-bar-fill');
+        const label = document.getElementById('progress-bar-label');
+        
+        if (!container || !fill || !label) return;
+
+        if (total > 0) {
+            container.style.display = 'flex';
+            const percentage = Math.round((completed / total) * 100);
+            fill.style.width = percentage + '%';
+            label.textContent = completed + ' / ' + total + ' phases completed (' + verified + ' verified)';
+        } else {
+            container.style.display = 'none';
+        }
       }
 
       function renderPhasePlan(plan, formattedMarkdown) {
@@ -153,21 +287,49 @@ export function getChatScript(): string {
 
         const headerDiv = document.createElement('div');
         headerDiv.className = 'phase-plan-header';
+        
+        // Header content...
+        // Removed separate title div inside phase-plan-header to simplify as per CSS
+        // Re-adding structure to match styles if needed, but styling was generic phase-plan-message
 
-        const titleDiv = document.createElement('div');
-        titleDiv.className = 'phase-plan-title';
-        titleDiv.innerHTML = '<span class="codicon codicon-list-ordered"></span><span>' + plan.title + '</span>';
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'phase-plan-actions';
 
-        headerDiv.appendChild(titleDiv);
+        const copyMarkdownButton = document.createElement('button');
+        copyMarkdownButton.className = 'phase-plan-action-button';
+        copyMarkdownButton.dataset.action = 'copy-markdown';
+        copyMarkdownButton.innerHTML = '<span class="codicon codicon-clippy"></span><span>Copy All</span>';
 
-        const addPhaseBtn = document.createElement('button');
-        addPhaseBtn.className = 'add-phase-btn';
-        addPhaseBtn.innerHTML = '<span class="codicon codicon-add"></span> Add Phase';
-        addPhaseBtn.onclick = () => showAddPhaseDialog(null);
-        headerDiv.appendChild(addPhaseBtn);
+        const exportMarkdownButton = document.createElement('button');
+        exportMarkdownButton.className = 'phase-plan-action-button';
+        exportMarkdownButton.dataset.action = 'export-markdown';
+        exportMarkdownButton.innerHTML = '<span class="codicon codicon-save"></span><span>Export MD</span>';
+
+        const exportJsonButton = document.createElement('button');
+        exportJsonButton.className = 'phase-plan-action-button';
+        exportJsonButton.dataset.action = 'export-json';
+        exportJsonButton.innerHTML = '<span class="codicon codicon-save-as"></span><span>Export JSON</span>';
+
+        const regenerateButton = document.createElement('button');
+        regenerateButton.className = 'phase-plan-action-button secondary';
+        regenerateButton.dataset.action = 'regenerate';
+        regenerateButton.innerHTML = '<span class="codicon codicon-sync"></span><span>Regenerate</span>';
+        
+        actionsDiv.appendChild(copyMarkdownButton);
+        actionsDiv.appendChild(exportMarkdownButton);
+        actionsDiv.appendChild(exportJsonButton);
+        actionsDiv.appendChild(regenerateButton);
 
         const contentDiv = document.createElement('div');
         contentDiv.className = 'phase-plan-content';
+        
+        // Add Phase Button (Top Level)
+        const addPhaseTopBtn = document.createElement('button');
+        addPhaseTopBtn.className = 'phase-plan-action-button';
+        addPhaseTopBtn.style.marginBottom = '16px';
+        addPhaseTopBtn.innerHTML = '<span class="codicon codicon-add"></span><span>Add New Phase</span>';
+        addPhaseTopBtn.onclick = () => showAddPhaseDialog(null);
+        contentDiv.appendChild(addPhaseTopBtn);
 
         // Render phases with tasks in Traycer style
         if (plan.phases && plan.phases.length > 0) {
@@ -184,27 +346,40 @@ export function getChatScript(): string {
             phaseHeader.innerHTML = '<span class="phase-number">Phase ' + (phaseIndex + 1) + '</span>' +
               '<span class="phase-title">' + phase.title + '</span>' +
               '<span class="phase-complexity complexity-' + (phase.estimatedComplexity || 'medium') + '">' + 
-              (phase.estimatedComplexity || 'medium') + '</span>' +
-              '<span class="phase-status-badge status-' + (phase.status || 'pending') + '">' +
-              '<span class="codicon ' + (phase.status === 'verified' ? 'codicon-verified-filled' : 
+              (phase.estimatedComplexity || 'medium') + '</span>';
+              
+            // Phase Status Badge
+            const statusBadge = document.createElement('span');
+            statusBadge.className = 'phase-status-badge status-' + (phase.status || 'pending');
+            // Assuming simplified CSS for status, or inline it
+            // Using existing logic but updated class names if any
+            statusBadge.innerHTML = '<span class="codicon ' + (phase.status === 'verified' ? 'codicon-verified-filled' : 
                                         phase.status === 'completed' ? 'codicon-check' : 
                                         phase.status === 'in-progress' ? 'codicon-sync' : 'codicon-circle-outline') + '"></span>' +
-              (phase.status || 'pending') + '</span>';
+                                        (phase.status || 'pending');
+            phaseHeader.appendChild(statusBadge);
 
             // Verification button (only if completed)
             if (phase.status === 'completed') {
-              phaseHeader.innerHTML += '<button class="verify-phase-btn update-phase-btn" data-phase-id="' + phase.id + '">' +
-                '<span class="codicon codicon-check-all"></span>Mark as Verified</button>';
+               const verifyBtn = document.createElement('button');
+               verifyBtn.className = 'verify-phase-btn phase-plan-action-button';
+               verifyBtn.dataset.phaseId = phase.id;
+               verifyBtn.innerHTML = '<span class="codicon codicon-check-all"></span>Mark as Verified';
+               // Add click handler via delegation
+               phaseHeader.appendChild(verifyBtn);
             }
 
             // Action buttons
             const actionsSpan = document.createElement('span');
             actionsSpan.className = 'phase-actions';
+            actionsSpan.style.marginLeft = 'auto'; // Push to right
+            actionsSpan.style.display = 'flex';
+            actionsSpan.style.gap = '4px';
 
             // Edit/Delete buttons (only for pending phases)
             if (phase.status === 'pending') {
               const editBtn = document.createElement('button');
-              editBtn.className = 'phase-action-btn edit-phase-btn';
+              editBtn.className = 'header-btn'; // Reuse header-btn for small icon buttons
               editBtn.innerHTML = '<span class="codicon codicon-edit"></span>';
               editBtn.title = 'Edit Phase';
               editBtn.onclick = (e) => {
@@ -213,17 +388,19 @@ export function getChatScript(): string {
               };
 
               const deleteBtn = document.createElement('button');
-              deleteBtn.className = 'phase-action-btn delete-phase-btn';
+              deleteBtn.className = 'header-btn danger';
               deleteBtn.innerHTML = '<span class="codicon codicon-trash"></span>';
               deleteBtn.title = 'Delete Phase';
               deleteBtn.onclick = (e) => {
                 e.stopPropagation();
-                vscode.postMessage({
-                  type: 'deletePhase',
-                  payload: {
-                    conversationId: plan.conversationId,
-                    phaseId: phase.id
-                  }
+                showConfirmDialog('Delete Phase', 'Are you sure you want to delete this phase?', 'Delete', () => {
+                   vscode.postMessage({
+                      type: 'deletePhase',
+                      payload: {
+                        conversationId: plan.conversationId,
+                        phaseId: phase.id
+                      }
+                    });
                 });
               };
               
@@ -233,7 +410,7 @@ export function getChatScript(): string {
             
             // Add After button (for all phases)
             const addAfterBtn = document.createElement('button');
-            addAfterBtn.className = 'phase-action-btn add-after-btn';
+            addAfterBtn.className = 'header-btn';
             addAfterBtn.innerHTML = '<span class="codicon codicon-plus"></span>';
             addAfterBtn.title = 'Add Phase After This';
             addAfterBtn.onclick = (e) => {
@@ -274,11 +451,16 @@ export function getChatScript(): string {
                 
                 const taskInfo = document.createElement('div');
                 taskInfo.className = 'task-info';
+                
+                // Status badge as toggle
+                const statusClass = 'status-' + (task.status || 'pending');
+                const statusIcon = task.status === 'completed' ? 'codicon-check' : 
+                                   task.status === 'in-progress' ? 'codicon-sync' : 'codicon-circle-outline';
+
                 taskInfo.innerHTML = '<span class="task-number">' + (taskIndex + 1) + '</span>' +
                   '<span class="task-title">' + task.title + '</span>' +
-                  '<span class="task-status-badge status-' + (task.status || 'pending') + '" title="Click to change status" data-task-id="' + task.id + '" data-phase-id="' + phase.id + '">' +
-                  '<span class="codicon ' + (task.status === 'completed' ? 'codicon-check' : 
-                                            task.status === 'in-progress' ? 'codicon-sync' : 'codicon-circle-outline') + '"></span>' +
+                  '<span class="task-status-badge ' + statusClass + '" title="Click to change status" data-task-id="' + task.id + '" data-phase-id="' + phase.id + '">' +
+                  '<span class="codicon ' + statusIcon + '"></span>' +
                   (task.status || 'pending') + '</span>';
 
                 const taskActions = document.createElement('div');
@@ -332,34 +514,6 @@ export function getChatScript(): string {
           contentDiv.appendChild(pre);
         }
 
-        const actionsDiv = document.createElement('div');
-        actionsDiv.className = 'phase-plan-actions';
-
-        const copyMarkdownButton = document.createElement('button');
-        copyMarkdownButton.className = 'phase-plan-action-button';
-        copyMarkdownButton.dataset.action = 'copy-markdown';
-        copyMarkdownButton.innerHTML = '<span class="codicon codicon-clippy"></span><span>Copy All</span>';
-
-        const exportMarkdownButton = document.createElement('button');
-        exportMarkdownButton.className = 'phase-plan-action-button';
-        exportMarkdownButton.dataset.action = 'export-markdown';
-        exportMarkdownButton.innerHTML = '<span class="codicon codicon-save"></span><span>Export Markdown</span>';
-
-        const exportJsonButton = document.createElement('button');
-        exportJsonButton.className = 'phase-plan-action-button';
-        exportJsonButton.dataset.action = 'export-json';
-        exportJsonButton.innerHTML = '<span class="codicon codicon-save-as"></span><span>Export JSON</span>';
-
-        const regenerateButton = document.createElement('button');
-        regenerateButton.className = 'phase-plan-action-button secondary';
-        regenerateButton.dataset.action = 'regenerate';
-        regenerateButton.innerHTML = '<span class="codicon codicon-sync"></span><span>Regenerate</span>';
-
-        actionsDiv.appendChild(copyMarkdownButton);
-        actionsDiv.appendChild(exportMarkdownButton);
-        actionsDiv.appendChild(exportJsonButton);
-        actionsDiv.appendChild(regenerateButton);
-
         const handoffDiv = document.createElement('div');
         handoffDiv.className = 'global-handoff-container';
 
@@ -402,6 +556,70 @@ export function getChatScript(): string {
         }
 
         setState();
+      }
+      
+      /* --- Custom Modal Functions --- */
+      
+      function showConfirmDialog(title, message, confirmText, onConfirm) {
+         const overlay = document.createElement('div');
+         overlay.className = 'confirm-modal-overlay';
+         
+         const content = document.createElement('div');
+         content.className = 'confirm-modal-content';
+         
+         const h3 = document.createElement('h3');
+         h3.textContent = title;
+         
+         const p = document.createElement('p');
+         p.textContent = message;
+         
+         const actions = document.createElement('div');
+         actions.className = 'modal-actions';
+         
+         const closeModal = () => {
+             document.removeEventListener('keydown', handleKeydown);
+             overlay.remove();
+         };
+
+         const handleConfirm = () => {
+             onConfirm();
+             closeModal();
+         };
+
+         const handleKeydown = (e) => {
+             if (e.key === 'Escape') {
+                 closeModal();
+                 e.preventDefault();
+                 e.stopPropagation();
+             } else if (e.key === 'Enter') {
+                 handleConfirm();
+                 e.preventDefault();
+                 e.stopPropagation();
+             }
+         };
+         
+         const cancelBtn = document.createElement('button');
+         cancelBtn.className = 'modal-btn secondary';
+         cancelBtn.textContent = 'Cancel';
+         cancelBtn.onclick = closeModal;
+         
+         const confirmBtn = document.createElement('button');
+         confirmBtn.className = 'modal-btn primary confirm-btn-danger';
+         confirmBtn.textContent = confirmText || 'Confirm';
+         confirmBtn.onclick = handleConfirm;
+         
+         actions.appendChild(cancelBtn);
+         actions.appendChild(confirmBtn);
+         
+         content.appendChild(h3);
+         content.appendChild(p);
+         content.appendChild(actions);
+         overlay.appendChild(content);
+         
+         document.body.appendChild(overlay);
+         document.addEventListener('keydown', handleKeydown);
+         
+         confirmBtn.focus();
       }
 
       function showAddPhaseDialog(afterPhaseId) {
@@ -470,6 +688,10 @@ export function getChatScript(): string {
         
         const titleLabel = document.createElement('label');
         titleLabel.textContent = 'Title';
+        titleLabel.style.display = 'block';
+        titleLabel.style.marginBottom = '4px';
+        titleLabel.style.fontSize = '12px';
+        
         const titleInput = document.createElement('input');
         titleInput.className = 'modal-input';
         titleInput.type = 'text';
@@ -477,10 +699,22 @@ export function getChatScript(): string {
         
         const descLabel = document.createElement('label');
         descLabel.textContent = 'Description';
+        descLabel.style.display = 'block';
+        descLabel.style.marginBottom = '4px';
+        descLabel.style.fontSize = '12px';
+        
         const descInput = document.createElement('textarea');
         descInput.className = 'modal-input';
         descInput.value = currentDescription;
         descInput.rows = 4;
+        
+        const actions = document.createElement('div');
+        actions.className = 'modal-actions';
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.className = 'modal-btn secondary';
+        cancelBtn.onclick = () => modal.remove();
         
         const actions = document.createElement('div');
         actions.className = 'modal-actions';
@@ -570,9 +804,19 @@ export function getChatScript(): string {
 
         if (conversationStateBadge) {
           conversationStateBadge.className = getStateBadgeClass(state);
+          // Assuming conversation-state-badge element exists in ChatViewProvider
           const icon = stateIconMap[state] || 'info';
           const label = stateLabelMap[state] || state;
-          conversationStateBadge.innerHTML = '<span class="codicon codicon-' + icon + '"></span><span>' + label + '</span>';
+          // Simple string update or innerHTML if structure allows
+          // Using just text for compatibility based on observation
+          conversationStateBadge.innerHTML = '<span class="codicon codicon-' + icon + '"></span> ' + label;
+        }
+
+        renderWorkflowButtons(state);
+        
+        // Request progress update if phases exist
+        if (metadata && metadata.phaseCount > 0) {
+            vscode.postMessage({ type: 'requestPhaseProgress' });
         }
 
         if (state === 'GENERATING_PHASES') {
@@ -592,6 +836,10 @@ export function getChatScript(): string {
         phaseGenerationIndicator = document.createElement('div');
         phaseGenerationIndicator.className = 'phase-generating-indicator';
         phaseGenerationIndicator.innerHTML = '<span class="codicon codicon-loading spin"></span><span>Generating phase plan...</span>';
+        phaseGenerationIndicator.style.padding = '12px';
+        phaseGenerationIndicator.style.textAlign = 'center';
+        phaseGenerationIndicator.style.color = 'var(--vscode-descriptionForeground)';
+        
         messagesContainer.appendChild(phaseGenerationIndicator);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
       }
@@ -711,6 +959,7 @@ export function getChatScript(): string {
       function clearMessages() {
         messages = [];
         messagesContainer.innerHTML = '';
+        removeExistingPhasePlan();
         if (emptyState) {
           emptyState.style.display = 'flex';
         }
@@ -725,7 +974,7 @@ export function getChatScript(): string {
         const provider = providers.find((p) => p.id === providerId);
         const providerName = provider ? provider.name : providerId;
 
-        providerStatus.classList.remove('available', 'unavailable');
+        providerStatus.classList.remove('available', 'unavailable', 'checking');
         const iconClass = available ? 'codicon-check' : 'codicon-error';
         providerStatus.classList.add(available ? 'available' : 'unavailable');
         providerStatus.innerHTML = \`
@@ -794,11 +1043,11 @@ export function getChatScript(): string {
         if (modelStatus) {
           const currentModelInfo = models.find(m => m.name === activeModel);
           if (currentModelInfo && currentModelInfo.isRunning) {
-            modelStatus.className = 'model-status running';
-            modelStatus.innerHTML = '<span class="codicon codicon-play"></span><span>Running</span>';
+             modelStatus.className = 'model-status running';
+             modelStatus.innerHTML = '<span class="codicon codicon-play"></span><span>Running</span>';
           } else {
-            modelStatus.className = 'model-status';
-            modelStatus.innerHTML = '';
+             modelStatus.className = 'model-status';
+             modelStatus.innerHTML = '';
           }
         }
 
@@ -826,14 +1075,8 @@ export function getChatScript(): string {
                 loadingBtns.forEach(btn => btn.classList.remove('loading'));
             }
             
-            const errorMessage = {
-              id: Date.now().toString(),
-              role: 'assistant',
-              text: '❌ Error: ' + message.payload.error,
-              timestamp: Date.now()
-            };
-            messages.push(errorMessage);
-            renderMessage(errorMessage);
+            // Render actionable error message
+            renderErrorMessage(message.payload);
             setState();
             break;
 
@@ -843,12 +1086,19 @@ export function getChatScript(): string {
             break;
             
           case 'phaseEdited':
-             // Handle phase edited
              break;
 
           case 'phaseDeleted':
-             // Handle phase deleted
              break;
+            
+          case 'assistantsList':
+            // This message is currently not handled, but kept for future use.
+            // It would typically update a list of available assistants/agents.
+            break;
+
+          case 'noProvidersReady':
+            showOnboardingWizard();
+            break;
             
           case 'clearChat':
             clearMessages();
@@ -937,6 +1187,28 @@ export function getChatScript(): string {
             // Request updated list
             vscode.postMessage({ type: 'requestConversationList', payload: {} });
             break;
+            
+          case 'phaseStatusUpdated':
+            // Remove loading class if verify button exists
+            const verifiedBtns = document.querySelectorAll('.verify-phase-btn.loading[data-phase-id="' + message.payload.phaseId + '"]');
+            verifiedBtns.forEach(btn => btn.classList.remove('loading'));
+            break;
+
+          case 'phaseProgress':
+            if (typeof updatePhaseDashboard === 'function') {
+                updatePhaseDashboard(
+                    message.payload.completed, 
+                    message.payload.verified, 
+                    message.payload.total
+                );
+            }
+            break;
+
+          case 'nextActionSuggestions':
+            if (typeof renderNextActionSuggestions === 'function') {
+                renderNextActionSuggestions(message.payload.suggestions);
+            }
+            break;
         }
       });
 
@@ -979,7 +1251,7 @@ export function getChatScript(): string {
           return;
         }
 
-        conversationListData.forEach((conv) =\u003e {
+        conversationListData.forEach((conv) => {
           const item = document.createElement('div');
           item.className = 'conversation-item' + (conv.id === activeConversationId ? ' active' : '');
           item.dataset.conversationId = conv.id;
@@ -1007,7 +1279,7 @@ export function getChatScript(): string {
           loadBtn.className = 'conversation-action-btn';
           loadBtn.title = 'Load';
           loadBtn.innerHTML = '\u003cspan class="codicon codicon-folder-opened"\u003e\u003c/span\u003e';
-          loadBtn.onclick = (e) =\u003e {
+          loadBtn.onclick = (e) => {
             e.stopPropagation();
             vscode.postMessage({ type: 'loadConversation', payload: { conversationId: conv.id } });
           };
@@ -1016,10 +1288,10 @@ export function getChatScript(): string {
           renameBtn.className = 'conversation-action-btn';
           renameBtn.title = 'Rename';
           renameBtn.innerHTML = '\u003cspan class="codicon codicon-edit"\u003e\u003c/span\u003e';
-          renameBtn.onclick = (e) =\u003e {
+          renameBtn.onclick = (e) => {
             e.stopPropagation();
             const newTitle = prompt('Enter new title:', conv.title);
-            if (newTitle \u0026\u0026 newTitle.trim()) {
+            if (newTitle && newTitle.trim()) {
               vscode.postMessage({ type: 'renameConversation', payload: { conversationId: conv.id, newTitle: newTitle.trim() } });
             }
           };
@@ -1028,7 +1300,7 @@ export function getChatScript(): string {
           exportBtn.className = 'conversation-action-btn';
           exportBtn.title = 'Export';
           exportBtn.innerHTML = '\u003cspan class="codicon codicon-export"\u003e\u003c/span\u003e';
-          exportBtn.onclick = (e) =\u003e {
+          exportBtn.onclick = (e) => {
             e.stopPropagation();
             const format = confirm('Export as JSON? (Cancel for Markdown)') ? 'json' : 'markdown';
             vscode.postMessage({ type: 'exportConversationToFile', payload: { conversationId: conv.id, format } });
@@ -1038,11 +1310,11 @@ export function getChatScript(): string {
           deleteBtn.className = 'conversation-action-btn danger';
           deleteBtn.title = 'Delete';
           deleteBtn.innerHTML = '\u003cspan class="codicon codicon-trash"\u003e\u003c/span\u003e';
-          deleteBtn.onclick = (e) =\u003e {
+          deleteBtn.onclick = (e) => {
             e.stopPropagation();
-            if (confirm('Delete this conversation?')) {
-              vscode.postMessage({ type: 'deleteConversation', payload: { conversationId: conv.id } });
-            }
+            showConfirmDialog('Delete Conversation', 'Are you sure you want to delete this conversation?', 'Delete', () => {
+                vscode.postMessage({ type: 'deleteConversation', payload: { conversationId: conv.id } });
+            });
           };
 
           actions.appendChild(loadBtn);
@@ -1062,7 +1334,7 @@ export function getChatScript(): string {
       const historyCloseBtn = document.getElementById('history-close-btn');
 
       if (historyModal) {
-        historyModal.addEventListener('click', (e) =\u003e {
+        historyModal.addEventListener('click', (e) => {
           if (e.target === historyModal) {
             hideHistoryModal();
           }
@@ -1070,13 +1342,13 @@ export function getChatScript(): string {
       }
 
       if (historyCloseBtn) {
-        historyCloseBtn.addEventListener('click', () =\u003e {
+        historyCloseBtn.addEventListener('click', () => {
           hideHistoryModal();
         });
       }
 
       if (historyBtn) {
-        historyBtn.addEventListener('click', () =\u003e {
+        historyBtn.addEventListener('click', () => {
           showHistoryModal();
         });
       }
@@ -1089,6 +1361,8 @@ export function getChatScript(): string {
 
         const action = target.dataset.action;
         const phasePlanContainer = target.closest('.phase-plan-message');
+        
+        // Don't handle if inside a dropdown (which also uses phase-plan-action-button class sometimes? no, different classes)
 
         if (action === 'copy-markdown') {
           copyToClipboard(currentPhaseMarkdown, 'Markdown', phasePlanContainer);
@@ -1217,7 +1491,6 @@ export function getChatScript(): string {
         }
       });
 
-      // Close dropdowns when clicking elsewhere
       // Global handoff dropdown toggle
       messagesContainer.addEventListener('click', (e) => {
         const handoffBtn = e.target.closest('.global-handoff-btn');
@@ -1260,6 +1533,35 @@ export function getChatScript(): string {
 
       // Event listeners
       sendButton.addEventListener('click', sendMessage);
+      
+      // Error Action Buttons (delegated)
+      messagesContainer.addEventListener('click', (e) => {
+        const actionBtn = e.target.closest('.error-action-btn');
+        if (!actionBtn) return;
+        
+        const action = actionBtn.dataset.action;
+        const providerId = actionBtn.dataset.providerId;
+        
+        switch (action) {
+          case 'retry':
+            vscode.postMessage({ type: 'retryLastRequest' });
+            break;
+            
+          case 'switchProvider':
+            if (providerId) {
+               vscode.postMessage({ type: 'switchProviderAndRetry', payload: { providerId } });
+            }
+            break;
+            
+          case 'refreshModels':
+             vscode.postMessage({ type: 'refreshModels', payload: { providerId } });
+             break;
+             
+          case 'openSettings':
+             vscode.postMessage({ type: 'openSettings' });
+             break;
+        }
+      });
 
       if (providerSelect) {
         providerSelect.addEventListener('change', (event) => {
@@ -1311,15 +1613,15 @@ export function getChatScript(): string {
 
       if (clearChatBtn) {
         clearChatBtn.addEventListener('click', () => {
-          if (confirm('Clear all messages?')) {
-            clearMessages();
-            vscode.postMessage({ type: 'clearChat', payload: {} });
-          }
+           showConfirmDialog('Clear Chat', 'Are you sure you want to clear all messages?', 'Clear All', () => {
+                clearMessages();
+                vscode.postMessage({ type: 'clearChat', payload: {} });
+           });
         });
       }
       
       messageInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
           e.preventDefault();
           sendMessage();
         }
@@ -1363,6 +1665,160 @@ export function getChatScript(): string {
       if (providers.length > 0) {
         updateProviderList(providers, activeProviderId);
       }
-    })();
+
+      // Global Keyboard Shortcuts
+      document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+             if (document.activeElement === messageInput) {
+                  sendMessage();
+             }
+        }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+             e.preventDefault();
+             vscode.postMessage({ type: 'newChat', payload: {} });
+        }
+      });
+
+      // Export All Button Listener
+      const exportAllBtn = document.getElementById('export-all-btn');
+      if (exportAllBtn) {
+          exportAllBtn.addEventListener('click', (e) => {
+               e.stopPropagation();
+               const format = confirm('Export all conversations as JSON? (Cancel for Markdown)') ? 'json' : 'markdown';
+               vscode.postMessage({ type: 'exportAllConversations', payload: { format } });
+          });
+      }
+
+      function updatePhaseDashboard(completed, verified, total) {
+        const dashboard = document.getElementById('phase-dashboard');
+        if (!dashboard) return;
+        
+        const hasPhases = total > 0;
+        dashboard.style.display = hasPhases ? 'flex' : 'none';
+        
+        // Update Donut Chart
+        const chartPath = dashboard.querySelector('.dashboard-chart-fill');
+        if (chartPath) {
+          // Calculate percentage based on verified phases for progress? 
+          // Plan says: "Phase Progress Dashboard... Visual representation of completed phases".
+          // "Update progress bar: completed / total".
+          // But dashboard stats say "X/Y Verified".
+          // I will use verified count for the chart as strictly completing without verifying is partial.
+          // Or use completed count. I'll use verified count as it's the stricter metric.
+          const percentage = total > 0 ? (verified / total) * 100 : 0;
+          chartPath.setAttribute('stroke-dasharray', percentage + ', 100');
+        }
+        
+        // Update Stats
+        const statsVerified = document.getElementById('dashboard-stats-verified');
+        if (statsVerified) {
+           statsVerified.textContent = verified + '/' + total + ' Verified';
+        }
+      }
+
+function renderNextActionSuggestions(suggestions) {
+  let container = document.getElementById('next-action-suggestions');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'next-action-suggestions';
+    container.className = 'next-action-suggestions';
+    // Append to messages container or after it?
+    // "Append to messages container after phase plan"
+    // messagesContainer contains messages.
+    // If I append it to messagesContainer, it's just another element.
+    messagesContainer.appendChild(container);
+  }
+
+  container.innerHTML = '';
+  if (!suggestions || suggestions.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+  container.style.display = 'block';
+
+  const title = document.createElement('div');
+  title.className = 'suggestions-title';
+  title.innerHTML = '<span class="codicon codicon-sparkle"></span> Suggested Next Actions';
+  container.appendChild(title);
+
+  const list = document.createElement('ul');
+  list.className = 'suggestions-list';
+  suggestions.forEach(s => {
+    const li = document.createElement('li');
+    li.textContent = s;
+    list.appendChild(li);
+  });
+  container.appendChild(list);
+
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+      /* --- Onboarding Wizard Functions --- */
+
+      function showOnboardingWizard() {
+        if (onboardingWizard) {
+          onboardingWizard.style.display = 'flex';
+        }
+        if (emptyState) {
+          emptyState.style.display = 'none';
+        }
+        if (messagesContainer) {
+          // Hide or clear messages? Maybe just ensure wizard is on top or hide container content
+          // But styles say wizard is in messages-container
+          // So we hide other children?
+          // Actually, let's just show it. It might be appended.
+          // Wait, in HTML it is IN messages-container.
+          // We probably want to hide empty state and maybe messages if any?
+          // For now, simple toggling.
+        }
+        
+        // Hide input area or disable it? 
+        // Logic says "Hide empty state", wizard is visible.
+      }
+
+      function hideOnboardingWizard() {
+        if (onboardingWizard) {
+          onboardingWizard.style.display = 'none';
+        }
+        // Empty state is managed by renderMessage/clearChat
+      }
+
+      // Add event listeners for Onboarding
+      document.addEventListener('click', (e) => {
+        const target = e.target;
+        if (!target) return;
+        
+        // Handle onboarding buttons (delegation)
+        const btn = target.closest('.onboarding-btn, .onboarding-refresh');
+        if (btn) {
+            const action = btn.dataset.action;
+            if (action === 'install-ollama') {
+                vscode.postMessage({ 
+                    type: 'openExternalLink', 
+                    payload: { url: 'https://ollama.com' } 
+                });
+            } else if (action === 'test-ollama') {
+                vscode.postMessage({ type: 'testOllamaConnection' });
+            } else if (action === 'config-gemini') {
+                vscode.postMessage({ 
+                    type: 'openSettings', 
+                    payload: { settingId: 'junkrat.gemini.apiKey' } 
+                });
+            } else if (action === 'config-other') {
+                vscode.postMessage({ 
+                    type: 'openSettings', 
+                    payload: { settingId: 'activeProvider' } 
+                });
+            } else if (action === 'refresh-status') {
+                vscode.postMessage({ type: 'requestProviderList' });
+                // Also trigger a manual check via testOllamaConnection concept or just provider list
+                // Provider list refresh triggers nothing if status unchanged in backend, 
+                // but checking connection explicitly is better.
+                vscode.postMessage({ type: 'testOllamaConnection' }); 
+            }
+        }
+      });
+
+    }) ();
   `;
 }

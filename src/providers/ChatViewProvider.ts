@@ -12,15 +12,18 @@ import {
   PhasePlanMessage,
   ConversationStateMessage,
   ModelListMessage,
+  NoProvidersReadyMessage,
 } from '../types/messages';
 import { ConfigurationService } from '../services/ConfigurationService';
 import { ProviderFactory } from './ProviderFactory';
 import { ProviderId } from '../types/configuration';
-import { PhasePlan, PhaseTask, Phase } from '../types/conversation';
+import { PhasePlan, PhaseTask, Phase, ConversationState } from '../types/conversation';
 import { PhasePlanFormatter } from '../services/PhasePlanFormatter';
 import { OllamaProvider, OllamaModelInfo } from './OllamaProvider';
 import { PhaseManager } from '../services/PhaseManager';
 import { TelemetryService } from '../services/TelemetryService';
+import { AIError } from '../types/errors';
+import { ErrorMessage } from '../types/messages';
 
 /**
  * Provides the chat webview for the JunkRat sidebar
@@ -31,6 +34,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _configChangeDisposable?: vscode.Disposable;
   private _pollingInterval?: ReturnType<typeof setInterval>;
   private _lastProviderAvailable: boolean = false;
+  private _lastUserMessage: string | undefined;
+
+  // Polling optimization state
+  private _pollingAttempts: number = 0;
+  private readonly _maxPollingAttempts: number = 36; // 3 minutes at 5s intervals
+  private _pollingBackoffMultiplier: number = 1;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -68,8 +77,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       await this._sendConfigurationStatus();
     });
 
-    // Start polling for provider availability
-    this._startProviderPolling();
+    // Check initial status
+    this._checkInitialProviderStatus();
 
     // Handle view disposal
     webviewView.onDidDispose(() => {
@@ -92,11 +101,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /**
    * Start polling for provider availability (auto-refresh when Ollama starts)
    */
+  /**
+   * Start polling for provider availability (auto-refresh when Ollama starts)
+   */
   private _startProviderPolling(): void {
-    // Poll every 5 seconds
+    if (this._pollingInterval) {
+      clearInterval(this._pollingInterval);
+    }
+
+    // Poll with dynamic interval
+    const interval = 5000 * this._pollingBackoffMultiplier;
+
     this._pollingInterval = setInterval(async () => {
       await this._checkProviderAndRefresh();
-    }, 5000);
+    }, interval);
+  }
+
+  /**
+   * Check initial provider status to decide whether to poll
+   */
+  private async _checkInitialProviderStatus(): Promise<void> {
+    const activeProviderId = this._configService.getActiveProviderId();
+    const isAvailable = await this._chatService.checkProviderAvailability(activeProviderId);
+
+    if (isAvailable) {
+      this._lastProviderAvailable = true;
+      // Skip polling if already available
+    } else {
+      // Start polling if not available
+      this._startProviderPolling();
+    }
   }
 
   /**
@@ -107,12 +141,59 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // Check if we exceeded max attempts
+    if (this._pollingAttempts >= this._maxPollingAttempts) {
+      if (this._pollingInterval) {
+        clearInterval(this._pollingInterval);
+        this._pollingInterval = undefined;
+      }
+
+      if (!this._lastProviderAvailable) {
+        const message: NoProvidersReadyMessage = {
+          type: 'noProvidersReady',
+          payload: {
+            message: 'No AI providers are ready. Please configure a provider in Settings.',
+            showOnboarding: true
+          }
+        };
+        this.sendMessageToWebview(message);
+      }
+      return;
+    }
+
+    this._pollingAttempts++;
+
+    // Implement backoff after 1 minute (12 attempts)
+    if (this._pollingAttempts === 12) {
+      this._pollingBackoffMultiplier = 2;
+      // Restart polling with new interval
+      this._startProviderPolling();
+      return;
+    }
+
     const activeProviderId = this._configService.getActiveProviderId();
     const isAvailable = await this._chatService.checkProviderAvailability(activeProviderId);
 
     // If availability changed, refresh the UI
     if (isAvailable !== this._lastProviderAvailable) {
       this._lastProviderAvailable = isAvailable;
+
+      // Reset polling state on success
+      if (isAvailable) {
+        this._pollingAttempts = 0;
+        this._pollingBackoffMultiplier = 1;
+        // Keep polling but gently to detect disconnects? 
+        // Or stop polling? The original code polled indefinitely.
+        // Let's reset to gentle polling or stop if we consider "connected" as done.
+        // For robustness, let's keep polling but reset backoff.
+        // Actually original logic was to auto-refresh. 
+        // We will keep polling with standard interval.
+        if (this._pollingBackoffMultiplier > 1) {
+          this._pollingBackoffMultiplier = 1;
+          this._startProviderPolling();
+        }
+      }
+
       await this._sendProviderList();
 
       // If Ollama became available, also refresh model list
@@ -151,6 +232,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           type: 'error',
           payload: {
             error: 'No phase plan available. Continue the conversation to generate one.',
+            retryable: false,
           },
         });
       }
@@ -173,6 +255,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     };
 
     this.sendMessageToWebview(message);
+
+    this._sendPhaseProgress();
+
+    const suggestions = this._generateNextActionSuggestions(plan);
+    this.sendMessageToWebview({
+      type: 'nextActionSuggestions',
+      payload: { suggestions }
+    });
   }
 
   private async _handleRegeneratePhasePlan(conversationId?: string): Promise<void> {
@@ -184,6 +274,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         type: 'error',
         payload: {
           error: 'No active conversation available for phase plan regeneration.',
+          retryable: false,
         },
       });
       return;
@@ -202,6 +293,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         type: 'error',
         payload: {
           error: message,
+          retryable: true, // Likely retryable if it failed mid-generation
         },
       });
     }
@@ -217,6 +309,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         type: 'error',
         payload: {
           error: 'No phase plan available to export.',
+          retryable: false,
         },
       });
       return;
@@ -237,6 +330,48 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     };
 
     this.sendMessageToWebview(exportMessage);
+  }
+
+  private async _handleExportAllConversations(format: 'markdown' | 'json'): Promise<void> {
+    try {
+      await this._chatService.exportAllConversations(format);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to export all conversations.';
+      this.sendMessageToWebview({
+        type: 'error',
+        payload: {
+          error: message,
+          retryable: false,
+        },
+      });
+    }
+  }
+
+  private _generateNextActionSuggestions(plan: PhasePlan): string[] {
+    const suggestions: string[] = [];
+
+    // Analyze complexity
+    if (plan.metadata && plan.metadata.complexity === 'very-complex') {
+      suggestions.push('Review phase dependencies carefully');
+    }
+
+    // Check first phase
+    if (plan.phases.length > 0) {
+      suggestions.push(`Start with Phase 1: ${plan.phases[0].title}`);
+    }
+
+    // Phase count
+    if (plan.phases.length > 5) {
+      suggestions.push('Consider tackling phases in parallel where dependencies allow');
+    }
+
+    // Always suggest
+    suggestions.push('Export plan to your preferred AI builder (Windsurf, Cursor, etc.)');
+
+    // Tech stack check (heuristic)
+    suggestions.push('Set up testing infrastructure early');
+
+    return suggestions;
   }
 
 
@@ -262,6 +397,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       case 'sendMessage':
         const userText = message.payload.text;
+        this._lastUserMessage = userText; // Store for retry
         console.log('User message:', userText);
 
         // Show thinking indicator (optional)
@@ -288,17 +424,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           });
         } catch (error) {
           console.error('AI request failed:', error);
-
-          // Send error message to webview
-          const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-
-          this.sendMessageToWebview({
-            type: 'error',
-            payload: {
-              error: `AI request failed: ${errorMessage}`,
-            },
-          });
+          await this._handleAIError(error);
         }
+        break;
+
+      case 'retryLastRequest':
+        await this._handleRetryLastRequest();
+        break;
+
+      case 'switchProviderAndRetry':
+        await this._handleSwitchProviderAndRetry(message.payload.providerId);
+        break;
+
+      case 'refreshModels':
+        await this._handleRefreshModels(message.payload.providerId);
         break;
 
       case 'requestProviderList':
@@ -390,6 +529,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         );
         break;
 
+      case 'exportAllConversations':
+        await this._handleExportAllConversations(message.payload.format);
+        break;
+
       case 'handoffTaskToTool':
         await this._handleHandoffTaskToTool(
           message.payload.task,
@@ -423,6 +566,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       case 'deletePhase':
         await this._handleDeletePhase(message.payload.conversationId, message.payload.phaseId);
+        break;
+
+      case 'triggerPhaseGeneration':
+        await this._handleTriggerPhaseGeneration();
+        break;
+
+
+
+      case 'verifyAllPhases':
+        await this._handleVerifyAllPhases();
+        break;
+
+      case 'requestPhaseProgress':
+        this._sendPhaseProgress();
+        break;
+
+      case 'testOllamaConnection':
+        const isAvailable = await this._chatService.checkProviderAvailability('ollama');
+        if (isAvailable) {
+          vscode.window.showInformationMessage('Verifying connection...');
+          // Trigger a refresh which will update the UI
+          await this._checkProviderAndRefresh();
+        } else {
+          // Force a check/fail
+          await this._checkProviderAndRefresh();
+        }
+        break;
+
+      case 'openExternalLink':
+        if (message.payload.url) {
+          vscode.env.openExternal(vscode.Uri.parse(message.payload.url));
+        }
         break;
     }
   }
@@ -617,7 +792,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (!validation.canVerify) {
         this.sendMessageToWebview({
           type: 'error',
-          payload: { error: validation.reason || 'Cannot verify phase' }
+          payload: { error: validation.reason || 'Cannot verify phase', retryable: false }
         });
         return;
       }
@@ -642,11 +817,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
 
       this._telemetryService?.sendEvent('verifyPhase', { phaseId });
+
+      this._sendPhaseProgress(conversation.metadata.id);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to verify phase';
       this.sendMessageToWebview({
         type: 'error',
-        payload: { error: message }
+        payload: { error: message, retryable: false }
       });
     }
   }
@@ -676,11 +853,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this._sendPhasePlan(conversation.phasePlan);
 
       this._telemetryService?.sendEvent('updateTaskStatus', { phaseId, taskId, status });
+
+      this._sendPhaseProgress(conversation.metadata.id);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to update task status';
       this.sendMessageToWebview({
         type: 'error',
-        payload: { error: message }
+        payload: { error: message, retryable: false }
       });
     }
   }
@@ -720,7 +899,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       } catch {
         this.sendMessageToWebview({
           type: 'error',
-          payload: { error: 'Gemini CLI is not installed. Install it with: npm install -g @anthropic-ai/gemini-cli' },
+          payload: { error: 'Gemini CLI is not installed. Install it with: npm install -g @anthropic-ai/gemini-cli', retryable: false },
         });
         return;
       }
@@ -761,8 +940,124 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const message = error instanceof Error ? error.message : 'Failed to execute task.';
       this.sendMessageToWebview({
         type: 'error',
-        payload: { error: `Gemini CLI error: ${message}` },
+        payload: { error: `Gemini CLI error: ${message}`, retryable: false },
       });
+    }
+  }
+
+  private async _handleAIError(error: unknown): Promise<void> {
+    const aiError = error instanceof AIError ? error : undefined;
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+
+    let errorType: ErrorMessage['payload']['errorType'] = 'api_error';
+    let suggestedActions: ErrorMessage['payload']['suggestedActions'] = [];
+
+    if (aiError) {
+      // Map AIError types to errorType
+      switch (aiError.code) {
+        case 'NETWORK_ERROR':
+          errorType = 'network';
+          break;
+        case 'TIMEOUT':
+          errorType = 'timeout';
+          break;
+        case 'RATE_LIMIT':
+          errorType = 'rate_limit';
+          break;
+        case 'INVALID_REQUEST':
+          errorType = 'invalid_request';
+          break;
+        default:
+          errorType = 'api_error';
+      }
+
+      // Add retry action if retryable
+      if (aiError.retryable) {
+        suggestedActions.push({
+          action: 'retry',
+          label: 'Retry Request',
+        });
+      }
+
+      // Add switch provider action
+      const nextProvider = this._chatService.registry.getNextAvailableProvider([aiError.provider]);
+      if (nextProvider) {
+        suggestedActions.push({
+          action: 'switchProvider',
+          label: `Switch to ${nextProvider.name}`,
+          providerId: nextProvider.id,
+        });
+      }
+
+      // Check if it's a model-related error
+      if (errorMessage.toLowerCase().includes('model') || errorMessage.toLowerCase().includes('not found')) {
+        errorType = 'model_not_found';
+        suggestedActions.push({
+          action: 'refreshModels',
+          label: 'Refresh Model List',
+        });
+
+        // Automatically refresh model list
+        if (aiError.provider === 'ollama') {
+          await this._sendModelList(aiError.provider);
+        }
+      }
+    } else {
+      // Generic error, offer retry and settings
+      suggestedActions.push(
+        { action: 'retry', label: 'Retry Request' },
+        { action: 'openSettings', label: 'Open Settings' }
+      );
+    }
+
+    this.sendMessageToWebview({
+      type: 'error',
+      payload: {
+        error: errorMessage,
+        errorType,
+        retryable: aiError?.retryable ?? true,
+        failedProvider: aiError?.provider,
+        suggestedActions,
+        details: aiError?.cause?.message,
+      },
+    });
+  }
+
+  private async _handleRetryLastRequest(): Promise<void> {
+    if (!this._lastUserMessage) {
+      vscode.window.showWarningMessage('No previous request to retry');
+      return;
+    }
+
+    // Re-send the last message
+    await this._handleMessage({
+      type: 'sendMessage',
+      payload: { text: this._lastUserMessage },
+    });
+  }
+
+  private async _handleSwitchProviderAndRetry(providerId: string): Promise<void> {
+    try {
+      await this._configService.setActiveProvider(providerId as ProviderId);
+      await this._sendProviderList();
+
+      vscode.window.showInformationMessage(`Switched to ${providerId}`);
+
+      // Retry the last request
+      if (this._lastUserMessage) {
+        await this._handleRetryLastRequest();
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to switch provider: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async _handleRefreshModels(providerId?: string): Promise<void> {
+    try {
+      await this._sendModelList(providerId);
+      vscode.window.showInformationMessage('Model list refreshed');
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to refresh models: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -823,7 +1118,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const message = error instanceof Error ? error.message : 'Failed to add phase';
       this.sendMessageToWebview({
         type: 'error',
-        payload: { error: message },
+        payload: { error: message, retryable: false },
       });
     }
   }
@@ -851,7 +1146,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const message = error instanceof Error ? error.message : 'Failed to edit phase';
       this.sendMessageToWebview({
         type: 'error',
-        payload: { error: message },
+        payload: { error: message, retryable: false },
       });
     }
   }
@@ -885,7 +1180,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const message = error instanceof Error ? error.message : 'Failed to delete phase';
       this.sendMessageToWebview({
         type: 'error',
-        payload: { error: message },
+        payload: { error: message, retryable: false },
       });
     }
   }
@@ -958,12 +1253,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.sendMessageToWebview(message);
   }
 
-  private async _sendModelList(): Promise<void> {
+  private async _sendModelList(providerId?: string): Promise<void> {
     if (!this._view) {
       return;
     }
 
-    const activeProviderId = this._configService.getActiveProviderId();
+    const activeProviderId = providerId || this._configService.getActiveProviderId();
 
     // Only send model list for Ollama provider
     if (activeProviderId !== 'ollama') {
@@ -971,6 +1266,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     try {
+      // Access registry through ChatService
+      const provider = this._chatService.registry.getProvider(activeProviderId);
+
+      if (!provider) {
+        // Fallback to creating one if not in registry (legacy behavior) or return
+        // Ideally we use registry.
+      }
+
       const settings = this._configService.getProviderSettings('ollama');
       const ollamaProvider = new OllamaProvider({
         baseUrl: settings.baseUrl,
@@ -1001,6 +1304,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+
   private async _handleModelSelection(modelName: string): Promise<void> {
     if (!modelName) {
       return;
@@ -1023,6 +1327,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         type: 'error',
         payload: {
           error: message,
+          retryable: false,
         },
       });
     }
@@ -1039,6 +1344,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         type: 'error',
         payload: {
           error: `Unsupported provider: ${providerId}`,
+          retryable: false,
         },
       });
       return;
@@ -1053,6 +1359,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         type: 'error',
         payload: {
           error: message,
+          retryable: true,
         },
       });
       return;
@@ -1064,6 +1371,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         type: 'error',
         payload: {
           error: `Provider "${providerId}" is not available. Check configuration.`,
+          retryable: true,
         },
       });
       return;
@@ -1111,18 +1419,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <div class="chat-container">
     <div class="chat-header">
       <div class="header-title">
-        <span class="codicon codicon-hubot"></span>
         <span>JunkRat</span>
       </div>
+      <div class="phase-dashboard" id="phase-dashboard" style="display: none;">
+        <div class="dashboard-chart">
+          <svg viewBox="0 0 36 36">
+            <path class="dashboard-chart-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            <path class="dashboard-chart-fill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+          </svg>
+        </div>
+        <div class="dashboard-stats">
+          <span id="dashboard-stats-verified">0/0 Verified</span>
+          <span class="dashboard-label">Phase Progress</span>
+        </div>
+      </div>
       <div class="header-actions">
+        <!-- Reordered buttons: Clear -> New -> History -->
+        <button class="header-btn primary" id="clear-chat-btn" title="Clear Chat">
+          <span class="codicon codicon-trash"></span>
+        </button>
         <button class="header-btn" id="new-chat-btn" title="New Chat">
           <span class="codicon codicon-add"></span>
         </button>
-        <button class="header-btn" id="history-btn" title="Chat History">
+        <button class="header-btn" id="history-btn" title="History">
           <span class="codicon codicon-history"></span>
-        </button>
-        <button class="header-btn" id="clear-chat-btn" title="Clear Chat">
-          <span class="codicon codicon-trash"></span>
         </button>
       </div>
     </div>
@@ -1131,11 +1451,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       <select id="provider-select"></select>
       <span class="provider-status" id="provider-status">
         <span class="codicon codicon-sync"></span>
-        <span>Checking…</span>
+        <span>Checking...</span>
       </span>
       <button class="settings-button" id="provider-settings-button">
-        <span class="codicon codicon-sync"></span>
-        <span>Refresh</span>
+        <span class="codicon codicon-settings-gear"></span>
+        <span>Config</span>
       </button>
     </div>
     <div class="model-selector" id="model-selector-container" style="display: none;">
@@ -1143,18 +1463,93 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       <select id="model-select"></select>
       <span class="model-status" id="model-status"></span>
     </div>
+    <div class="conversation-state-container" id="conversation-state-container" style="display: none;">
+      <div class="conversation-state-badge" id="conversation-state-badge">
+        <span class="codicon codicon-info"></span> Idle
+      </div>
+      <div class="phase-progress-bar" id="phase-progress-bar" style="display: none;">
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progress-bar-fill" style="width: 0%"></div>
+        </div>
+        <div class="progress-bar-label" id="progress-bar-label">0 / 0 phases completed</div>
+      </div>
+    </div>
+    <div class="workflow-actions-container" id="workflow-actions-container" style="display: none;">
+      <!-- Buttons will be dynamically inserted here by chatScript.ts -->
+    </div>
     <div class="messages-container" id="messages-container">
+      
+      <!-- Onboarding Wizard -->
+      <div id="onboarding-wizard" style="display: none;">
+        <div class="onboarding-content">
+          <h2>Welcome to JunkRat! 🚀</h2>
+          <p>Let's set up your AI provider to start planning phases.</p>
+          
+          <div class="onboarding-options">
+            <div class="onboarding-option recommended">
+              <span class="codicon codicon-star-full"></span>
+              <h3>Ollama (Recommended)</h3>
+              <p>Free, private, local AI models</p>
+              <button class="onboarding-btn" data-action="install-ollama">
+                Install Ollama
+              </button>
+              <button class="onboarding-btn secondary" data-action="test-ollama">
+                Test Connection
+              </button>
+            </div>
+            
+            <div class="onboarding-option">
+              <span class="codicon codicon-cloud"></span>
+              <h3>Google Gemini</h3>
+              <p>Cloud-based AI with API key</p>
+              <button class="onboarding-btn" data-action="config-gemini">
+                Enter API Key
+              </button>
+            </div>
+            
+            <div class="onboarding-option">
+              <span class="codicon codicon-settings-gear"></span>
+              <h3>Other Providers</h3>
+              <p>OpenRouter, Custom endpoints</p>
+              <button class="onboarding-btn" data-action="config-other">
+                Configure
+              </button>
+            </div>
+          </div>
+          
+          <button class="onboarding-refresh" data-action="refresh-status">
+            <span class="codicon codicon-refresh"></span>
+            Refresh Status
+          </button>
+        </div>
+      </div>
+
       <div class="empty-state" id="empty-state">
-        <div class="codicon codicon-hubot" style="font-size: 48px; margin-bottom: 12px;"></div>
-        <p><strong>Welcome to JunkRat AI</strong></p>
-        <p>Plan your coding projects with AI assistance</p>
+        <div class="codicon codicon-hubot"></div>
+        <h2>Hey there, vibe coder! 🚀</h2>
+        <p class="subtitle">Tell me your wildest project idea and I'll break it down into epic phases</p>
+        <div class="empty-state-features">
+          <div class="feature-item">
+            <span class="codicon codicon-comment-discussion"></span>
+            <span>Just describe what you want in plain English</span>
+          </div>
+          <div class="feature-item">
+            <span class="codicon codicon-lightbulb"></span>
+            <span>I'll ask smart questions to nail the details</span>
+          </div>
+          <div class="feature-item">
+            <span class="codicon codicon-rocket"></span>
+            <span>Get a battle-tested phase plan ready for any AI builder</span>
+          </div>
+        </div>
+        <p class="empty-state-cta">Drop your idea below and let's make magic happen ✨</p>
       </div>
     </div>
     <div class="input-container">
       <textarea 
         id="message-input" 
-        placeholder="Describe your project idea..."
-        rows="2"
+        placeholder="Describe your project idea..." 
+        rows="1"
       ></textarea>
       <button id="send-button">Send</button>
     </div>
@@ -1166,8 +1561,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           <button class="history-close-btn" id="history-close-btn">
             <span class="codicon codicon-close"></span>
           </button>
+          <div class="history-header-actions">
+            <button class="history-action-btn" id="export-all-btn" title="Export All Conversations">
+              <span class="codicon codicon-export"></span>
+              <span>Export All</span>
+            </button>
+          </div>
         </div>
-        <div class="history-modal-body">
+        <div class="history-modal-body" style="flex: 1; overflow-y: auto; padding: 10px;">
           <div id="conversation-list" class="conversation-list"></div>
         </div>
       </div>
@@ -1227,7 +1628,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const message = error instanceof Error ? error.message : 'Failed to format task';
       this.sendMessageToWebview({
         type: 'error',
-        payload: { error: message }
+        payload: { error: message, retryable: false }
       });
     }
   }
@@ -1267,8 +1668,123 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const message = error instanceof Error ? error.message : 'Failed to format plan';
       this.sendMessageToWebview({
         type: 'error',
-        payload: { error: message }
+        payload: { error: message, retryable: false }
       });
     }
+  }
+  private async _handleTriggerPhaseGeneration(): Promise<void> {
+    try {
+      const conversation = this._chatService.getActiveConversation();
+      if (!conversation) {
+        throw new Error('No active conversation');
+      }
+
+      // Manually transition to phase generation
+      this._chatService.transitionState(conversation.metadata.id, ConversationState.ANALYZING_REQUIREMENTS);
+
+      // Send state update to webview
+      this.sendMessageToWebview({
+        type: 'conversationState',
+        payload: {
+          state: ConversationState.ANALYZING_REQUIREMENTS,
+          conversationId: conversation.metadata.id,
+          metadata: conversation.metadata
+        }
+      });
+
+      // Trigger phase plan generation
+      const plan = await this._chatService.regeneratePhasePlan(conversation.metadata.id);
+
+      // Display the plan
+      if (plan) {
+        await this._sendPhasePlan(plan);
+        await this._sendConversationState();
+      }
+
+      this._telemetryService?.sendEvent('triggerPhaseGeneration');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to generate phase plan';
+      this.sendMessageToWebview({
+        type: 'error',
+        payload: { error: message, retryable: false }
+      });
+    }
+  }
+
+  private async _handleVerifyAllPhases(): Promise<void> {
+    try {
+      const conversation = this._chatService.getActiveConversation();
+      if (!conversation || !conversation.phasePlan) {
+        throw new Error('No phase plan available');
+      }
+
+      const phaseManager = new PhaseManager();
+      phaseManager.setActivePlan(conversation.phasePlan);
+
+      let verifiedCount = 0;
+      let errorCount = 0;
+      const errors: string[] = [];
+
+      for (const phase of conversation.phasePlan.phases) {
+        const { canVerify, reason } = phaseManager.canVerifyPhase(phase.id);
+        if (canVerify) {
+          phaseManager.verifyPhase(phase.id);
+          verifiedCount++;
+        } else {
+          errorCount++;
+          errors.push(`${phase.title}: ${reason}`);
+        }
+      }
+
+      // Update conversation with modified plan
+      conversation.phasePlan = phaseManager.getActivePlan()!;
+      await this._chatService.saveConversation(conversation);
+
+      // Send updated plan to webview
+      this._sendPhasePlan(conversation.phasePlan);
+
+      // Send feedback message
+      let feedbackMessage = `✅ Verified ${verifiedCount} phase(s).`;
+      if (errorCount > 0) {
+        feedbackMessage += `\n\n⚠️ Could not verify ${errorCount} phase(s):\n${errors.map(e => `- ${e}`).join('\n')}`;
+      }
+
+      this.sendMessageToWebview({
+        type: 'assistantMessage',
+        payload: {
+          id: Date.now().toString(),
+          role: 'assistant',
+          text: feedbackMessage,
+          timestamp: Date.now()
+        }
+      });
+
+      this._telemetryService?.sendEvent('verifyAllPhases', { verifiedCount: verifiedCount.toString(), errorCount: errorCount.toString() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to verify phases';
+      this.sendMessageToWebview({
+        type: 'error',
+        payload: { error: message, retryable: false }
+      });
+    }
+  }
+
+  private _sendPhaseProgress(conversationId?: string): void {
+    const conversation = conversationId
+      ? this._chatService.getConversation(conversationId)
+      : this._chatService.getActiveConversation();
+
+    if (!conversation || !conversation.phasePlan) {
+      return;
+    }
+
+    const phaseManager = new PhaseManager();
+    phaseManager.setActivePlan(conversation.phasePlan);
+    const progress = phaseManager.getPhaseProgress();
+
+    this.sendMessageToWebview({
+      type: 'phaseProgress',
+      payload: progress,
+    });
   }
 }

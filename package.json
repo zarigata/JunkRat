@@ -23,15 +23,7 @@
     "Programming Languages"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [
-    "onView:junkrat.chatView",
-    "onView:junkrat.settingsHelper",
-    "onCommand:junkrat.openChat",
-    "onCommand:junkrat.openSettings",
-    "onCommand:junkrat.validateConfiguration",
-    "onCommand:junkrat.switchProvider",
-    "onCommand:junkrat.helloWorld"
-  ],
+  "activationEvents": [],
   "contributes": {
     "configuration": {
       "title": "JunkRat",
@@ -224,13 +216,15 @@
           "id": "junkrat.chatView",
           "name": "AI Chat",
           "type": "webview",
-          "contextualTitle": "JunkRat Chat"
+          "contextualTitle": "JunkRat Chat",
+          "icon": "resources/dark/icon.svg"
         },
         {
           "id": "junkrat.settingsHelper",
           "name": "Configuration",
           "type": "webview",
-          "contextualTitle": "JunkRat Configuration Helper"
+          "contextualTitle": "JunkRat Configuration Helper",
+          "icon": "resources/dark/icon.svg"
         }
       ]
     },
@@ -258,6 +252,11 @@
         "command": "junkrat.switchProvider",
         "title": "JunkRat: Switch Provider",
         "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "junkrat.testConnection",
+        "title": "JunkRat: Test Connection",
+        "icon": "$(pulse)"
       }
     ],
     "menus": {

@@ -9,6 +9,7 @@ import {
   PhasePlan,
   Phase,
 } from '../types/conversation';
+import { AIError } from '../types/errors';
 import { PhaseManager } from './PhaseManager';
 import { PromptEngine } from './PromptEngine';
 import { PromptRole, RenderedPrompt } from '../types/prompts';
@@ -317,16 +318,44 @@ export class ConversationManager {
       { role: 'user' as const, content: requirementsText },
     ];
 
-    const response = await provider.chat({
-      messages: requestMessages,
-      model: undefined,
-      temperature: undefined,
-      maxTokens: undefined,
-      stream: false,
-      signal: undefined,
-    });
+    const excludedProviders: string[] = [];
+    let currentProvider = provider;
+    let lastError: Error | undefined;
 
-    return response.content;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await currentProvider.chat({
+          messages: requestMessages,
+          model: undefined,
+          temperature: undefined,
+          maxTokens: undefined,
+          stream: false,
+          signal: undefined,
+        });
+
+        return response.content;
+      } catch (error) {
+        lastError = error as Error;
+        console.error(`Provider ${currentProvider.id} failed in analysis:`, error);
+
+        if (error instanceof AIError && !error.retryable) {
+          excludedProviders.push(currentProvider.id);
+          const nextProvider = this._providerRegistry.getNextAvailableProvider(excludedProviders);
+
+          if (!nextProvider) {
+            throw error;
+          }
+
+          console.log(`Falling back to provider: ${nextProvider.id} for analysis`);
+          currentProvider = nextProvider;
+          // Re-configure context for new provider if needed, though requirements analysis is usually stateless logic
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    throw lastError || new Error('All providers failed during requirements analysis');
   }
 
   private async _generatePlan(
@@ -341,29 +370,56 @@ export class ConversationManager {
       return 'Unable to generate a phase plan without requirements. Please provide more details.';
     }
 
-    const plan = await this._phaseGenerator.generatePhasePlan(
-      requirements,
-      conversation.metadata.id,
-      provider
-    );
+    const excludedProviders: string[] = [];
+    let currentProvider = provider;
+    let lastError: Error | undefined;
 
-    conversation.phasePlan = plan;
-    conversation.metadata.phaseCount = plan.totalPhases;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const plan = await this._phaseGenerator.generatePhasePlan(
+          requirements,
+          conversation.metadata.id,
+          currentProvider
+        );
 
-    if (this._storageService) {
-      await this._storageService.savePhasePlan(conversation.metadata.id, plan);
+        conversation.phasePlan = plan;
+        conversation.metadata.phaseCount = plan.totalPhases;
+
+        if (this._storageService) {
+          await this._storageService.savePhasePlan(conversation.metadata.id, plan);
+        }
+
+        const markdown = PhasePlanFormatter.toMarkdown(plan);
+        const assistantMessage = this._createMessage('assistant', markdown, {
+          phaseData: plan,
+        });
+        conversation.messages.push(assistantMessage);
+
+        this._setState(conversation, ConversationState.COMPLETE);
+        this._touchConversation(conversation);
+
+        return markdown;
+      } catch (error) {
+        lastError = error as Error;
+        console.error(`Provider ${currentProvider.id} failed plan generation:`, error);
+
+        if (error instanceof AIError && !error.retryable) {
+          excludedProviders.push(currentProvider.id);
+          const nextProvider = this._providerRegistry.getNextAvailableProvider(excludedProviders);
+
+          if (!nextProvider) {
+            throw error;
+          }
+
+          console.log(`Falling back to provider: ${nextProvider.id} for planning`);
+          currentProvider = nextProvider;
+        } else {
+          throw error;
+        }
+      }
     }
 
-    const markdown = PhasePlanFormatter.toMarkdown(plan);
-    const assistantMessage = this._createMessage('assistant', markdown, {
-      phaseData: plan,
-    });
-    conversation.messages.push(assistantMessage);
-
-    this._setState(conversation, ConversationState.COMPLETE);
-    this._touchConversation(conversation);
-
-    return markdown;
+    throw lastError || new Error('All providers failed during plan generation');
   }
 
   private async _handleFollowUp(
@@ -388,20 +444,52 @@ export class ConversationManager {
       content: message.content,
     }));
 
-    const response = await provider.chat({
-      messages: chatMessages,
-      model: undefined,
-      temperature: undefined,
-      maxTokens: undefined,
-      stream: false,
-      signal: undefined,
-    });
+    const excludedProviders: string[] = [];
+    let currentProvider = provider;
+    let lastError: Error | undefined;
 
-    const assistantMessage = this._createMessage('assistant', response.content);
-    conversation.messages.push(assistantMessage);
-    this._touchConversation(conversation);
+    // Try up to 3 providers (current + 2 fallbacks)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await currentProvider.chat({
+          messages: chatMessages,
+          model: undefined,
+          temperature: undefined,
+          maxTokens: undefined,
+          stream: false,
+          signal: undefined,
+        });
 
-    return response.content;
+        const assistantMessage = this._createMessage('assistant', response.content);
+        conversation.messages.push(assistantMessage);
+        this._touchConversation(conversation);
+
+        return response.content;
+      } catch (error) {
+        lastError = error as Error;
+        console.error(`Provider ${currentProvider.id} failed:`, error);
+
+        // Check if error is retryable or if we should try another provider
+        if (error instanceof AIError && !error.retryable) {
+          // Non-retryable error, try next provider
+          excludedProviders.push(currentProvider.id);
+          const nextProvider = this._providerRegistry.getNextAvailableProvider(excludedProviders);
+
+          if (!nextProvider) {
+            throw error; // No more providers to try
+          }
+
+          console.log(`Falling back to provider: ${nextProvider.id}`);
+          currentProvider = nextProvider;
+          this._contextManager.configureForProvider(currentProvider.id);
+        } else {
+          // Retryable error, throw to let retry logic handle it
+          throw error;
+        }
+      }
+    }
+
+    throw lastError || new Error('All providers failed');
   }
 
   private _ensureSystemPrompt(conversation: Conversation, renderedPrompt: RenderedPrompt): void {
@@ -653,6 +741,17 @@ export class ConversationManager {
     }
 
     await this._storageService.exportPhasePlanToFile(conversationId, format);
+  }
+
+  /**
+   * Export all conversations to a single file
+   */
+  async exportAllConversations(format: 'json' | 'markdown'): Promise<void> {
+    if (!this._storageService) {
+      throw new Error('Storage service not available');
+    }
+
+    await this._storageService.exportAllConversationsToFile(format);
   }
 
   async addPhaseWithAI(

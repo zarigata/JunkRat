@@ -18,6 +18,12 @@ export async function activate(context: vscode.ExtensionContext) {
   const telemetryService = new TelemetryService(context);
   telemetryService.sendActivationEvent();
 
+  // First-time activation check
+  const isFirstActivation = !context.globalState.get<boolean>('junkrat.hasActivatedBefore');
+  if (isFirstActivation) {
+    await context.globalState.update('junkrat.hasActivatedBefore', true);
+  }
+
   // Initialize provider system
   const providerRegistry = new ProviderRegistry();
   const configurationService = new ConfigurationService(context, providerRegistry);
@@ -116,6 +122,54 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('junkrat.testConnection', async () => {
+      const activeProviderId = configurationService.getActiveProviderId();
+
+      // Show progress indicator
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Testing connection to ${activeProviderId}...`,
+        cancellable: false
+      }, async (progress) => {
+        try {
+          const isAvailable = await chatService.checkProviderAvailability(activeProviderId);
+
+          if (isAvailable) {
+            vscode.window.showInformationMessage(`✅ Connection to ${activeProviderId} successful!`);
+          } else {
+            vscode.window.showErrorMessage(`❌ Connection to ${activeProviderId} failed. Please check your API key and network connection.`);
+          }
+        } catch (error) {
+          vscode.window.showErrorMessage(`❌ Error testing connection: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      });
+    })
+  );
+
+  // Auto-open settings on first activation if no provider is configured
+  if (isFirstActivation) {
+    const config = configurationService.getConfiguration();
+    const hasConfiguredProvider =
+      (config.ollama.enabled && !!config.ollama.baseUrl) ||
+      (config.gemini.enabled && !!config.gemini.apiKey) ||
+      (config.openrouter.enabled && !!config.openrouter.apiKey) ||
+      (config.custom.enabled && !!config.custom.baseUrl);
+
+    if (!hasConfiguredProvider) {
+      // Small delay to let VS Code settle
+      setTimeout(async () => {
+        const selection = await vscode.window.showInformationMessage(
+          'Welcome to JunkRat! Let\'s configure your AI provider to get started.',
+          'Open Settings'
+        );
+        if (selection === 'Open Settings') {
+          await configurationService.openSettings();
+        }
+      }, 1000);
+    }
+  }
 
   // Register hello world command (legacy testing)
   const disposable = vscode.commands.registerCommand('junkrat.helloWorld', () => {

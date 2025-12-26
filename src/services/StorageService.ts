@@ -211,6 +211,60 @@ export class StorageService {
     }
 
     /**
+     * Export all conversations to a single file
+     */
+    async exportAllConversationsToFile(format: 'json' | 'markdown'): Promise<void> {
+        try {
+            const conversations = await this.loadAllConversations();
+            if (conversations.length === 0) {
+                vscode.window.showInformationMessage('No conversations to export.');
+                return;
+            }
+
+            const date = new Date().toISOString().split('T')[0];
+            const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'workspace';
+            const sanitizedName = workspaceName.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+            const filename = `junkrat-all-conversations-${sanitizedName}-${date}.${format}`;
+
+            const uri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(filename),
+                filters: {
+                    'JSON': ['json'],
+                    'Markdown': ['md'],
+                },
+            });
+
+            if (!uri) {
+                return; // User cancelled
+            }
+
+            let content: string;
+            if (format === 'json') {
+                content = JSON.stringify(conversations, null, 2);
+            } else {
+                content = `# JunkRat Export: All Conversations\n\n`;
+                content += `**Date:** ${new Date().toLocaleString()}\n`;
+                content += `**Workspace:** ${workspaceName}\n`;
+                content += `**Total Conversations:** ${conversations.length}\n\n`;
+
+                conversations.forEach((conv, index) => {
+                    content += `\n---\n\n`; // Separator
+                    content += `## Conversation ${index + 1}: ${conv.metadata.title}\n\n`;
+                    content += this._conversationToMarkdown(conv);
+                    content += `\n`;
+                });
+            }
+
+            await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf-8'));
+            vscode.window.showInformationMessage(`Successfully exported ${conversations.length} conversations to ${uri.fsPath}`);
+            console.log(`[StorageService] Exported all conversations to ${uri.fsPath}`);
+        } catch (error) {
+            console.error('[StorageService] Failed to export all conversations:', error);
+            vscode.window.showErrorMessage(`Failed to export all conversations: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    /**
      * Clear all stored conversations (for testing/reset)
      */
     async clearAllConversations(): Promise<void> {

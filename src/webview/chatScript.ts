@@ -197,11 +197,12 @@ export function getChatScript(): string {
                 '<span class="codicon codicon-check-all"></span>Mark as Verified</button>';
             }
 
+            // Action buttons
+            const actionsSpan = document.createElement('span');
+            actionsSpan.className = 'phase-actions';
+
             // Edit/Delete buttons (only for pending phases)
             if (phase.status === 'pending') {
-              const actionsSpan = document.createElement('span');
-              actionsSpan.className = 'phase-actions';
-              
               const editBtn = document.createElement('button');
               editBtn.className = 'phase-action-btn edit-phase-btn';
               editBtn.innerHTML = '<span class="codicon codicon-edit"></span>';
@@ -226,20 +227,22 @@ export function getChatScript(): string {
                 });
               };
               
-              const addAfterBtn = document.createElement('button');
-              addAfterBtn.className = 'phase-action-btn add-after-btn';
-              addAfterBtn.innerHTML = '<span class="codicon codicon-plus"></span>';
-              addAfterBtn.title = 'Add Phase After This';
-              addAfterBtn.onclick = (e) => {
-                 e.stopPropagation();
-                 showAddPhaseDialog(phase.id);
-              };
-
               actionsSpan.appendChild(editBtn);
               actionsSpan.appendChild(deleteBtn);
-              actionsSpan.appendChild(addAfterBtn);
-              phaseHeader.appendChild(actionsSpan);
             }
+            
+            // Add After button (for all phases)
+            const addAfterBtn = document.createElement('button');
+            addAfterBtn.className = 'phase-action-btn add-after-btn';
+            addAfterBtn.innerHTML = '<span class="codicon codicon-plus"></span>';
+            addAfterBtn.title = 'Add Phase After This';
+            addAfterBtn.onclick = (e) => {
+                e.stopPropagation();
+                showAddPhaseDialog(phase.id);
+            };
+            actionsSpan.appendChild(addAfterBtn);
+
+            phaseHeader.appendChild(actionsSpan);
 
             phaseItem.appendChild(phaseHeader);
 

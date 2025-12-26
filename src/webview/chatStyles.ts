@@ -996,5 +996,153 @@ export function getChatStyles(): string {
       opacity: 0.8;
       box-shadow: 0 0 2px rgba(0,0,0,0.2);
     }
+
+    /* Modal Styles */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      backdrop-filter: blur(2px);
+    }
+
+    .modal-content {
+      background-color: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 20px;
+      width: 400px;
+      max-width: 90%;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .modal-content h3 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .modal-content label {
+      font-size: 12px;
+      font-weight: 500;
+      margin-bottom: -10px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .modal-input {
+      width: 100%;
+      padding: 8px 12px;
+      background-color: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 13px;
+      resize: vertical;
+      min-height: 36px;
+    }
+
+    .modal-input:focus {
+      outline: 1px solid var(--vscode-focusBorder);
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .modal-btn {
+      padding: 6px 14px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: background-color 0.15s;
+    }
+
+    .modal-btn.primary {
+      background-color: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+
+    .modal-btn.primary:hover {
+      background-color: var(--vscode-button-hoverBackground);
+    }
+
+    .modal-btn.secondary {
+      background-color: transparent;
+      color: var(--vscode-button-secondaryForeground);
+      border-color: var(--vscode-button-secondaryBorder);
+    }
+
+    .modal-btn.secondary:hover {
+      background-color: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    /* Phase Header Buttons */
+    .add-phase-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      margin-left: auto;
+    }
+
+    .add-phase-btn:hover {
+      background-color: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    /* Phase Action Buttons (Inline) */
+    .phase-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: auto;
+    }
+
+    .phase-action-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border: none;
+      background-color: transparent;
+      color: var(--vscode-icon-foreground);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.1s;
+    }
+
+    .phase-action-btn:hover {
+      background-color: var(--vscode-toolbar-hoverBackground);
+    }
+
+    .phase-action-btn .codicon {
+      font-size: 14px;
+    }
+
+    .add-after-btn {
+      color: var(--vscode-charts-green);
+    }
   `;
 }

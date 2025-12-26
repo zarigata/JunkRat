@@ -101,6 +101,7 @@ export class PromptEngine {
     this._registerRequirementGathererTemplate();
     this._registerRequirementAnalyzerTemplate();
     this._registerPhasePlannerTemplate();
+    this._registerSinglePhasePlannerTemplate();
     this._registerSummarizerTemplate();
   }
 
@@ -248,5 +249,55 @@ Generate {{minPhases}} to {{maxPhases}} phases. Think carefully. Take your time.
 
     this.registerTemplate(template);
     this._defaultTemplates.set(PromptRole.SUMMARIZER, template.id);
+  }
+
+  private _registerSinglePhasePlannerTemplate(): void {
+    const template: PromptTemplate = {
+      id: 'single-phase-planner-v1',
+      name: 'Single Phase Planner',
+      description: 'Generates a single phase to be inserted into an existing plan.',
+      systemPrompt: `You are an expert software architect. Your task is to generate a SINGLE phase to be added to an existing project plan.
+    
+    ## EXISTING PLAN CONTEXT:
+    {{existingPlan}}
+    
+    ## INSTRUCTION:
+    Generate a new phase that addresses the following requirement:
+    "{{requirements}}"
+    
+    This phase will be inserted AFTER phase ID: {{afterPhaseId}}.
+    
+    ## REQUIREMENTS:
+    - The phase must be consistent with the existing plan's style and granularity.
+    - If the requirement implies complex work, break it down into tasks.
+    - If the requirement is simple, a single phase without tasks might suffice, but tasks are preferred for actionable steps.
+    - Ensure dependencies are logical (refer to existing phase IDs if needed, but be careful as ids might change).
+    
+    ## OUTPUT FORMAT (strict JSON):
+    \`\`\`json
+    {
+      "title": "Phase Title",
+      "description": "Detailed description",
+      "estimatedComplexity": "low|medium|high",
+      "tags": ["tag1", "tag2"],
+      "files": ["file1.ts", "file2.ts"],
+      "tasks": [
+        {
+          "id": "task-001",
+          "title": "Task Title",
+          "goal": "Goal",
+          "files": ["file1.ts"],
+          "instructions": ["Do this"],
+          "acceptance_criteria": ["Criteria"]
+        }
+      ]
+    }
+    \`\`\`
+    `,
+      variables: ['conversationState', 'requirements', 'existingPlan', 'afterPhaseId'],
+    };
+
+    this.registerTemplate(template);
+    this._defaultTemplates.set(PromptRole.SINGLE_PHASE_PLANNER, template.id);
   }
 }

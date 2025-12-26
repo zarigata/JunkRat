@@ -178,7 +178,18 @@ export function getChatScript(): string {
             phaseHeader.innerHTML = '<span class="phase-number">Phase ' + (phaseIndex + 1) + '</span>' +
               '<span class="phase-title">' + phase.title + '</span>' +
               '<span class="phase-complexity complexity-' + (phase.estimatedComplexity || 'medium') + '">' + 
-              (phase.estimatedComplexity || 'medium') + '</span>';
+              (phase.estimatedComplexity || 'medium') + '</span>' +
+              '<span class="phase-status-badge status-' + (phase.status || 'pending') + '">' +
+              '<span class="codicon ' + (phase.status === 'verified' ? 'codicon-verified-filled' : 
+                                        phase.status === 'completed' ? 'codicon-check' : 
+                                        phase.status === 'in-progress' ? 'codicon-sync' : 'codicon-circle-outline') + '"></span>' +
+              (phase.status || 'pending') + '</span>';
+
+            // Verification button (only if completed)
+            if (phase.status === 'completed') {
+              phaseHeader.innerHTML += '<button class="verify-phase-btn update-phase-btn" data-phase-id="' + phase.id + '">' +
+                '<span class="codicon codicon-check-all"></span>Mark as Verified</button>';
+            }
 
             phaseItem.appendChild(phaseHeader);
 
@@ -186,6 +197,14 @@ export function getChatScript(): string {
             phaseDesc.className = 'phase-description';
             phaseDesc.textContent = phase.description;
             phaseItem.appendChild(phaseDesc);
+            
+            // Verification completed indicator
+            if (phase.status === 'verified') {
+              const verifiedIndicator = document.createElement('div');
+              verifiedIndicator.className = 'verification-completed-indicator';
+              verifiedIndicator.innerHTML = '<span class="codicon codicon-pass-filled"></span><span>Verification Completed</span>';
+              phaseItem.appendChild(verifiedIndicator);
+            }
 
             // Render tasks with execute buttons (Traycer style)
             if (phase.tasks && phase.tasks.length > 0) {
@@ -203,7 +222,11 @@ export function getChatScript(): string {
                 const taskInfo = document.createElement('div');
                 taskInfo.className = 'task-info';
                 taskInfo.innerHTML = '<span class="task-number">' + (taskIndex + 1) + '</span>' +
-                  '<span class="task-title">' + task.title + '</span>';
+                  '<span class="task-title">' + task.title + '</span>' +
+                  '<span class="task-status-badge status-' + (task.status || 'pending') + '" title="Click to change status" data-task-id="' + task.id + '" data-phase-id="' + phase.id + '">' +
+                  '<span class="codicon ' + (task.status === 'completed' ? 'codicon-check' : 
+                                            task.status === 'in-progress' ? 'codicon-sync' : 'codicon-circle-outline') + '"></span>' +
+                  (task.status || 'pending') + '</span>';
 
                 const taskActions = document.createElement('div');
                 taskActions.className = 'task-actions';
@@ -214,6 +237,13 @@ export function getChatScript(): string {
                 executeBtn.innerHTML = '<button class="execute-btn"><span class="codicon codicon-play"></span><span>Execute</span></button>' +
                   '<div class="execute-menu">' +
                   '<button class="execute-option" data-action="copy"><span class="codicon codicon-clippy"></span>Copy to Clipboard</button>' +
+                  '<div class="execute-menu-divider"></div>' +
+                  '<button class="execute-option" data-action="roo-code"><span class="codicon codicon-rocket"></span>Roo Code</button>' +
+                  '<button class="execute-option" data-action="windsurf"><span class="codicon codicon-symbol-method"></span>Windsurf</button>' +
+                  '<button class="execute-option" data-action="aider"><span class="codicon codicon-file-code"></span>Aider</button>' +
+                  '<button class="execute-option" data-action="cursor"><span class="codicon codicon-edit"></span>Cursor</button>' +
+                  '<button class="execute-option" data-action="continue"><span class="codicon codicon-debug-continue"></span>Continue</button>' +
+                  '<div class="execute-menu-divider"></div>' +
                   '<button class="execute-option" data-action="gemini-cli"><span class="codicon codicon-terminal"></span>Run in Gemini CLI</button>' +
                   '</div>';
 
@@ -257,10 +287,15 @@ export function getChatScript(): string {
         copyMarkdownButton.dataset.action = 'copy-markdown';
         copyMarkdownButton.innerHTML = '<span class="codicon codicon-clippy"></span><span>Copy All</span>';
 
-        const copyJsonButton = document.createElement('button');
-        copyJsonButton.className = 'phase-plan-action-button';
-        copyJsonButton.dataset.action = 'copy-json';
-        copyJsonButton.innerHTML = '<span class="codicon codicon-json"></span><span>Export JSON</span>';
+        const exportMarkdownButton = document.createElement('button');
+        exportMarkdownButton.className = 'phase-plan-action-button';
+        exportMarkdownButton.dataset.action = 'export-markdown';
+        exportMarkdownButton.innerHTML = '<span class="codicon codicon-save"></span><span>Export Markdown</span>';
+
+        const exportJsonButton = document.createElement('button');
+        exportJsonButton.className = 'phase-plan-action-button';
+        exportJsonButton.dataset.action = 'export-json';
+        exportJsonButton.innerHTML = '<span class="codicon codicon-save-as"></span><span>Export JSON</span>';
 
         const regenerateButton = document.createElement('button');
         regenerateButton.className = 'phase-plan-action-button secondary';
@@ -268,15 +303,42 @@ export function getChatScript(): string {
         regenerateButton.innerHTML = '<span class="codicon codicon-sync"></span><span>Regenerate</span>';
 
         actionsDiv.appendChild(copyMarkdownButton);
-        actionsDiv.appendChild(copyJsonButton);
+        actionsDiv.appendChild(exportMarkdownButton);
+        actionsDiv.appendChild(exportJsonButton);
         actionsDiv.appendChild(regenerateButton);
 
+        const handoffDiv = document.createElement('div');
+        handoffDiv.className = 'global-handoff-container';
+
+        const handoffDropdown = document.createElement('div');
+        handoffDropdown.className = 'global-handoff-dropdown';
+        handoffDropdown.innerHTML = 
+          '<button class="global-handoff-btn">' +
+          '<span class="codicon codicon-export"></span>' +
+          '<span>Handoff To AI</span>' +
+          '<span class="codicon codicon-chevron-down"></span>' +
+          '</button>' +
+          '<div class="global-handoff-menu">' +
+          '<button class="handoff-option" data-tool="roo-code">' +
+          '<span class="codicon codicon-rocket"></span>Roo Code</button>' +
+          '<button class="handoff-option" data-tool="windsurf">' +
+          '<span class="codicon codicon-symbol-method"></span>Windsurf</button>' +
+          '<button class="handoff-option" data-tool="aider">' +
+          '<span class="codicon codicon-file-code"></span>Aider</button>' +
+          '<button class="handoff-option" data-tool="cursor">' +
+          '<span class="codicon codicon-edit"></span>Cursor</button>' +
+          '<button class="handoff-option" data-tool="continue">' +
+          '<span class="codicon codicon-debug-continue"></span>Continue</button>' +
+          '</div>';
+
+        handoffDiv.appendChild(handoffDropdown);
         const feedbackDiv = document.createElement('div');
         feedbackDiv.className = 'phase-plan-feedback';
 
         phasePlanDiv.appendChild(headerDiv);
         phasePlanDiv.appendChild(contentDiv);
         phasePlanDiv.appendChild(actionsDiv);
+        phasePlanDiv.appendChild(handoffDiv);
         phasePlanDiv.appendChild(feedbackDiv);
 
         messagesContainer.appendChild(phasePlanDiv);
@@ -581,6 +643,12 @@ export function getChatScript(): string {
             break;
             
           case 'error':
+            // Remove loading state from any verify buttons
+            const loadingBtns = document.querySelectorAll('.verify-phase-btn.loading');
+            if (loadingBtns) {
+                loadingBtns.forEach(btn => btn.classList.remove('loading'));
+            }
+            
             const errorMessage = {
               id: Date.now().toString(),
               role: 'assistant',
@@ -665,8 +733,163 @@ export function getChatScript(): string {
             }
             setState();
             break;
+
+          case 'conversationList':
+            renderConversationList(message.payload.conversations, message.payload.activeConversationId);
+            break;
+
+          case 'conversationLoaded':
+            hideHistoryModal();
+            setState();
+            break;
+
+          case 'conversationDeleted':
+            // Request updated list
+            vscode.postMessage({ type: 'requestConversationList', payload: {} });
+            break;
         }
       });
+
+      // History modal state
+      let historyModalVisible = false;
+      let conversationListData = [];
+
+      function showHistoryModal() {
+        historyModalVisible = true;
+        const modal = document.getElementById('history-modal');
+        if (modal) {
+          modal.style.display = 'flex';
+        }
+        // Request conversation list
+        vscode.postMessage({ type: 'requestConversationList', payload: {} });
+      }
+
+      function hideHistoryModal() {
+        historyModalVisible = false;
+        const modal = document.getElementById('history-modal');
+        if (modal) {
+          modal.style.display = 'none';
+        }
+      }
+
+      function renderConversationList(conversations, activeConversationId) {
+        conversationListData = conversations || [];
+        const listContainer = document.getElementById('conversation-list');
+        if (!listContainer) {
+          return;
+        }
+
+        listContainer.innerHTML = '';
+
+        if (conversationListData.length === 0) {
+          const emptyDiv = document.createElement('div');
+          emptyDiv.className = 'history-empty';
+          emptyDiv.innerHTML = '\u003cspan class="codicon codicon-inbox"\u003e\u003c/span\u003e\u003cp\u003eNo conversations yet\u003c/p\u003e';
+          listContainer.appendChild(emptyDiv);
+          return;
+        }
+
+        conversationListData.forEach((conv) =\u003e {
+          const item = document.createElement('div');
+          item.className = 'conversation-item' + (conv.id === activeConversationId ? ' active' : '');
+          item.dataset.conversationId = conv.id;
+
+          const info = document.createElement('div');
+          info.className = 'conversation-info';
+
+          const title = document.createElement('div');
+          title.className = 'conversation-title';
+          title.textContent = conv.title || 'Untitled';
+
+          const meta = document.createElement('div');
+          meta.className = 'conversation-meta';
+          const date = new Date(conv.updatedAt);
+          const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+          meta.textContent = dateStr + (conv.phaseCount ? ' · ' + conv.phaseCount + ' phases' : '');
+
+          info.appendChild(title);
+          info.appendChild(meta);
+
+          const actions = document.createElement('div');
+          actions.className = 'conversation-actions';
+
+          const loadBtn = document.createElement('button');
+          loadBtn.className = 'conversation-action-btn';
+          loadBtn.title = 'Load';
+          loadBtn.innerHTML = '\u003cspan class="codicon codicon-folder-opened"\u003e\u003c/span\u003e';
+          loadBtn.onclick = (e) =\u003e {
+            e.stopPropagation();
+            vscode.postMessage({ type: 'loadConversation', payload: { conversationId: conv.id } });
+          };
+
+          const renameBtn = document.createElement('button');
+          renameBtn.className = 'conversation-action-btn';
+          renameBtn.title = 'Rename';
+          renameBtn.innerHTML = '\u003cspan class="codicon codicon-edit"\u003e\u003c/span\u003e';
+          renameBtn.onclick = (e) =\u003e {
+            e.stopPropagation();
+            const newTitle = prompt('Enter new title:', conv.title);
+            if (newTitle \u0026\u0026 newTitle.trim()) {
+              vscode.postMessage({ type: 'renameConversation', payload: { conversationId: conv.id, newTitle: newTitle.trim() } });
+            }
+          };
+
+          const exportBtn = document.createElement('button');
+          exportBtn.className = 'conversation-action-btn';
+          exportBtn.title = 'Export';
+          exportBtn.innerHTML = '\u003cspan class="codicon codicon-export"\u003e\u003c/span\u003e';
+          exportBtn.onclick = (e) =\u003e {
+            e.stopPropagation();
+            const format = confirm('Export as JSON? (Cancel for Markdown)') ? 'json' : 'markdown';
+            vscode.postMessage({ type: 'exportConversationToFile', payload: { conversationId: conv.id, format } });
+          };
+
+          const deleteBtn = document.createElement('button');
+          deleteBtn.className = 'conversation-action-btn danger';
+          deleteBtn.title = 'Delete';
+          deleteBtn.innerHTML = '\u003cspan class="codicon codicon-trash"\u003e\u003c/span\u003e';
+          deleteBtn.onclick = (e) =\u003e {
+            e.stopPropagation();
+            if (confirm('Delete this conversation?')) {
+              vscode.postMessage({ type: 'deleteConversation', payload: { conversationId: conv.id } });
+            }
+          };
+
+          actions.appendChild(loadBtn);
+          actions.appendChild(renameBtn);
+          actions.appendChild(exportBtn);
+          actions.appendChild(deleteBtn);
+
+          item.appendChild(info);
+          item.appendChild(actions);
+
+          listContainer.appendChild(item);
+        });
+      }
+
+      // History modal event handlers
+      const historyModal = document.getElementById('history-modal');
+      const historyCloseBtn = document.getElementById('history-close-btn');
+
+      if (historyModal) {
+        historyModal.addEventListener('click', (e) =\u003e {
+          if (e.target === historyModal) {
+            hideHistoryModal();
+          }
+        });
+      }
+
+      if (historyCloseBtn) {
+        historyCloseBtn.addEventListener('click', () =\u003e {
+          hideHistoryModal();
+        });
+      }
+
+      if (historyBtn) {
+        historyBtn.addEventListener('click', () =\u003e {
+          showHistoryModal();
+        });
+      }
 
       messagesContainer.addEventListener('click', (event) => {
         const target = event.target.closest('button.phase-plan-action-button');
@@ -679,6 +902,22 @@ export function getChatScript(): string {
 
         if (action === 'copy-markdown') {
           copyToClipboard(currentPhaseMarkdown, 'Markdown', phasePlanContainer);
+        } else if (action === 'export-markdown') {
+          vscode.postMessage({
+            type: 'exportPhasePlanToFile',
+            payload: {
+              conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
+              format: 'markdown'
+            },
+          });
+        } else if (action === 'export-json') {
+          vscode.postMessage({
+             type: 'exportPhasePlanToFile',
+             payload: {
+               conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
+               format: 'json'
+             },
+           });
         } else if (action === 'copy-json') {
           const json = currentPhasePlan ? JSON.stringify(currentPhasePlan, null, 2) : '';
           copyToClipboard(json, 'JSON', phasePlanContainer);
@@ -690,6 +929,53 @@ export function getChatScript(): string {
             },
           });
           showPhaseGenerationIndicator();
+        }
+      });
+
+      // Phase and Task action handlers
+      messagesContainer.addEventListener('click', (e) => {
+        // Verify Phase Button
+        const verifyBtn = e.target.closest('.verify-phase-btn');
+        if (verifyBtn) {
+          const phaseId = verifyBtn.dataset.phaseId;
+          if (phaseId && !verifyBtn.classList.contains('loading')) {
+            verifyBtn.classList.add('loading');
+            vscode.postMessage({
+              type: 'verifyPhase',
+              payload: {
+                phaseId,
+                conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined
+              }
+            });
+          }
+          return;
+        }
+
+        // Task Status Badge (Toggle status)
+        const taskBadge = e.target.closest('.task-status-badge');
+        if (taskBadge) {
+          const taskId = taskBadge.dataset.taskId;
+          const phaseId = taskBadge.dataset.phaseId;
+          const currentStatus = taskBadge.classList.contains('status-completed') ? 'completed' : 
+                               taskBadge.classList.contains('status-in-progress') ? 'in-progress' : 'pending';
+          
+          let newStatus = 'pending';
+          if (currentStatus === 'pending') newStatus = 'in-progress';
+          else if (currentStatus === 'in-progress') newStatus = 'completed';
+          else if (currentStatus === 'completed') newStatus = 'pending'; // Cycle back to pending
+
+          if (taskId && phaseId) {
+            vscode.postMessage({
+              type: 'updateTaskStatus',
+              payload: {
+                taskId,
+                phaseId,
+                status: newStatus,
+                conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined
+              }
+            });
+          }
+          return;
         }
       });
 
@@ -719,23 +1005,53 @@ export function getChatScript(): string {
 
         const task = JSON.parse(taskItem.dataset.taskData);
         const phaseTitle = taskItem.dataset.phaseTitle;
-        const formattedTask = formatTaskForExecution(task, phaseTitle);
 
         if (action === 'copy') {
+          const formattedTask = formatTaskForExecution(task, phaseTitle);
           copyToClipboard(formattedTask.replace(/\\\\n/g, '\\n'), 'Task', taskItem);
-          const dropdown = option.closest('.execute-dropdown');
-          if (dropdown) {
-            dropdown.classList.remove('open');
-          }
+        } else if (['roo-code', 'windsurf', 'aider', 'cursor', 'continue'].includes(action)) {
+          vscode.postMessage({
+            type: 'handoffTaskToTool',
+            payload: { task, phaseTitle, toolName: action }
+          });
         } else if (action === 'gemini-cli') {
           vscode.postMessage({
             type: 'executeTaskInGeminiCLI',
-            payload: {
-              task: task,
-              phaseTitle: phaseTitle,
-            },
+            payload: { task, phaseTitle }
           });
-          const dropdown = option.closest('.execute-dropdown');
+        }
+
+        const dropdown = option.closest('.execute-dropdown');
+        if (dropdown) {
+          dropdown.classList.remove('open');
+        }
+      });
+
+      // Close dropdowns when clicking elsewhere
+      // Global handoff dropdown toggle
+      messagesContainer.addEventListener('click', (e) => {
+        const handoffBtn = e.target.closest('.global-handoff-btn');
+        if (handoffBtn) {
+          const dropdown = handoffBtn.closest('.global-handoff-dropdown');
+          if (dropdown) {
+            dropdown.classList.toggle('open');
+            e.stopPropagation();
+          }
+          return;
+        }
+
+        const handoffOption = e.target.closest('.handoff-option');
+        if (handoffOption) {
+          const toolName = handoffOption.dataset.tool;
+          vscode.postMessage({
+            type: 'handoffPlanToTool',
+            payload: {
+              conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
+              toolName
+            }
+          });
+          
+          const dropdown = handoffOption.closest('.global-handoff-dropdown');
           if (dropdown) {
             dropdown.classList.remove('open');
           }
@@ -746,6 +1062,9 @@ export function getChatScript(): string {
       document.addEventListener('click', (e) => {
         if (!e.target.closest('.execute-dropdown')) {
           document.querySelectorAll('.execute-dropdown.open').forEach(d => d.classList.remove('open'));
+        }
+        if (!e.target.closest('.global-handoff-dropdown')) {
+          document.querySelectorAll('.global-handoff-dropdown.open').forEach(d => d.classList.remove('open'));
         }
       });
 

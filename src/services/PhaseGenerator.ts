@@ -408,4 +408,76 @@ export class PhaseGenerator {
 
     return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
   }
+  async generateSinglePhase(
+    requirements: string,
+    existingPlan: PhasePlan,
+    afterPhaseId: string | null,
+    provider: IAIProvider
+  ): Promise<Phase> {
+    const renderedPrompt = this._promptEngine.renderPrompt(PromptRole.SINGLE_PHASE_PLANNER, {
+      conversationState: ConversationState.GENERATING_PHASES,
+      requirements,
+      existingPlan: JSON.stringify(
+        {
+          title: existingPlan.title,
+          description: existingPlan.description,
+          phases: existingPlan.phases.map((p) => ({
+            id: p.id,
+            title: p.title,
+          })),
+        },
+        null,
+        2
+      ),
+      afterPhaseId: afterPhaseId ?? 'start',
+      additionalContext: {},
+    });
+
+    const response = await this._requestPhasePlan(provider, renderedPrompt);
+
+    try {
+      const parsedPhase = this._parseSinglePhaseJSON(response.content);
+      return this._validateAndCompletePhase(parsedPhase, existingPlan);
+    } catch (error) {
+      const retryResponse = await this._requestPhasePlan(provider, renderedPrompt, true);
+      const parsedPhase = this._parseSinglePhaseJSON(retryResponse.content);
+      return this._validateAndCompletePhase(parsedPhase, existingPlan);
+    }
+  }
+
+  private _parseSinglePhaseJSON(content: string): Partial<Phase> {
+    const trimmed = content.trim();
+    const codeBlockMatch = trimmed.match(/```json\s*([\s\S]*?)```/i);
+    const jsonString = codeBlockMatch ? codeBlockMatch[1].trim() : this._extractJson(trimmed);
+
+    if (!jsonString) {
+      throw new Error('Unable to locate JSON in AI response.');
+    }
+
+    try {
+      return JSON.parse(jsonString) as Partial<Phase>;
+    } catch (error) {
+      throw new Error(`Failed to parse JSON phase: ${(error as Error).message}`);
+    }
+  }
+
+  private _validateAndCompletePhase(phase: Partial<Phase>, existingPlan: PhasePlan): Phase {
+    if (!phase.title || !phase.description) {
+      throw new Error('Generated phase missing title or description.');
+    }
+
+    return {
+      id: this._generateId('phase'),
+      title: phase.title,
+      description: phase.description,
+      order: 0, // Will be set by PhaseManager
+      estimatedComplexity: phase.estimatedComplexity ?? 'medium',
+      dependencies: phase.dependencies ?? [],
+      tags: phase.tags ?? [],
+      files: phase.files ?? [],
+      tasks: phase.tasks ?? [],
+      status: 'pending',
+    };
+  }
 }
+

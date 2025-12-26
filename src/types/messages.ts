@@ -90,6 +90,143 @@ export interface SelectModelMessage {
   };
 }
 
+export interface RequestConversationListMessage {
+  type: 'requestConversationList';
+}
+
+export interface LoadConversationMessage {
+  type: 'loadConversation';
+  payload: {
+    conversationId: string;
+  };
+}
+
+export interface DeleteConversationMessage {
+  type: 'deleteConversation';
+  payload: {
+    conversationId: string;
+  };
+}
+
+export interface ExportConversationToFileMessage {
+  type: 'exportConversationToFile';
+  payload: {
+    conversationId: string;
+    format: 'json' | 'markdown';
+  };
+}
+
+export interface ExportPhasePlanToFileMessage {
+  type: 'exportPhasePlanToFile';
+  payload: {
+    conversationId?: string;
+    format: 'markdown' | 'json';
+  };
+}
+
+export interface RenameConversationMessage {
+  type: 'renameConversation';
+  payload: {
+    conversationId: string;
+    newTitle: string;
+  };
+}
+
+export interface NewChatMessage {
+  type: 'newChat';
+}
+
+export interface ClearChatRequestMessage {
+  type: 'clearChat';
+}
+
+export interface VerifyPhaseMessage {
+  type: 'verifyPhase';
+  payload: {
+    phaseId: string;
+    conversationId?: string;
+  };
+}
+
+export interface UpdateTaskStatusMessage {
+  type: 'updateTaskStatus';
+  payload: {
+    phaseId: string;
+    taskId: string;
+    status: 'pending' | 'in-progress' | 'completed';
+    conversationId?: string;
+  };
+}
+
+export interface PhaseStatusUpdatedMessage {
+  type: 'phaseStatusUpdated';
+  payload: {
+    phaseId: string;
+    status: 'pending' | 'in-progress' | 'completed' | 'verified';
+    conversationId: string;
+  };
+}
+
+export interface ShowHistoryMessage {
+  type: 'showHistory';
+}
+
+export interface AddPhaseMessage {
+  type: 'addPhase';
+  payload: {
+    conversationId: string;
+    afterPhaseId: string | null;
+    userPrompt: string;
+  };
+}
+
+export interface EditPhaseMessage {
+  type: 'editPhase';
+  payload: {
+    conversationId: string;
+    phaseId: string;
+    updates: {
+      title?: string;
+      description?: string;
+      estimatedComplexity?: 'low' | 'medium' | 'high';
+      tags?: string[];
+      files?: string[];
+    };
+  };
+}
+
+export interface DeletePhaseMessage {
+  type: 'deletePhase';
+  payload: {
+    conversationId: string;
+    phaseId: string;
+  };
+}
+
+export interface PhaseAddedMessage {
+  type: 'phaseAdded';
+  payload: {
+    phasePlan: PhasePlan;
+    conversationId: string;
+  };
+}
+
+export interface PhaseEditedMessage {
+  type: 'phaseEdited';
+  payload: {
+    phasePlan: PhasePlan;
+    conversationId: string;
+  };
+}
+
+export interface PhaseDeletedMessage {
+  type: 'phaseDeleted';
+  payload: {
+    phasePlan: PhasePlan;
+    conversationId: string;
+  };
+}
+
 export type WebviewMessage =
   | SendMessageMessage
   | ReadyMessage
@@ -106,7 +243,23 @@ export type WebviewMessage =
   | ExportPhasePlanMessage
   | RequestModelListMessage
   | SelectModelMessage
-  | ExecuteTaskInGeminiCLIMessage;
+  | RequestConversationListMessage
+  | LoadConversationMessage
+  | DeleteConversationMessage
+  | ExportConversationToFileMessage
+  | RenameConversationMessage
+  | NewChatMessage
+  | ClearChatRequestMessage
+  | ShowHistoryMessage
+  | VerifyPhaseMessage
+  | UpdateTaskStatusMessage
+  | ExportPhasePlanToFileMessage
+  | ExecuteTaskInGeminiCLIMessage
+  | HandoffTaskToToolMessage
+  | HandoffPlanToToolMessage
+  | AddPhaseMessage
+  | EditPhaseMessage
+  | DeletePhaseMessage;
 
 export interface ExecuteTaskInGeminiCLIMessage {
   type: 'executeTaskInGeminiCLI';
@@ -120,6 +273,30 @@ export interface ExecuteTaskInGeminiCLIMessage {
       acceptance_criteria: string[];
     };
     phaseTitle: string;
+  };
+}
+
+export interface HandoffTaskToToolMessage {
+  type: 'handoffTaskToTool';
+  payload: {
+    task: {
+      id: string;
+      title: string;
+      goal: string;
+      files: string[];
+      instructions: string[];
+      acceptance_criteria: string[];
+    };
+    phaseTitle: string;
+    toolName: 'roo-code' | 'windsurf' | 'aider' | 'cursor' | 'continue';
+  };
+}
+
+export interface HandoffPlanToToolMessage {
+  type: 'handoffPlanToTool';
+  payload: {
+    conversationId?: string;
+    toolName: 'roo-code' | 'windsurf' | 'aider' | 'cursor' | 'continue';
   };
 }
 
@@ -268,6 +445,29 @@ export interface ModelChangedMessage {
   };
 }
 
+export interface ConversationListMessage {
+  type: 'conversationList';
+  payload: {
+    conversations: ConversationMetadata[];
+    activeConversationId: string | undefined;
+  };
+}
+
+export interface ConversationLoadedMessage {
+  type: 'conversationLoaded';
+  payload: {
+    conversationId: string;
+    metadata: ConversationMetadata;
+  };
+}
+
+export interface ConversationDeletedMessage {
+  type: 'conversationDeleted';
+  payload: {
+    conversationId: string;
+  };
+}
+
 export type ExtensionMessage =
   | UserMessageMessage
   | AssistantMessageMessage
@@ -281,7 +481,14 @@ export type ExtensionMessage =
   | PhasePlanMessage
   | ConversationStateMessage
   | ModelListMessage
-  | ModelChangedMessage;
+  | ModelChangedMessage
+  | ConversationListMessage
+  | ConversationLoadedMessage
+  | ConversationDeletedMessage
+  | PhaseStatusUpdatedMessage
+  | PhaseAddedMessage
+  | PhaseEditedMessage
+  | PhaseDeletedMessage;
 
 // Helper types
 export interface ChatMessage {

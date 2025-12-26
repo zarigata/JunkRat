@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2025-12-26
+
+### Added
+- **Phase Plan Export**: Export generated plans to Markdown and JSON files directly from the chat interface.
+- **Marketplace Readiness**: Added extension icon, banner, and enhanced metadata for the VS Code Marketplace.
+- **Telemetry**: Added optional anonymous usage tracking to help improve the extension.
+- **Documentation**: Comprehensive README with installation, configuration, and usage guidelines.
+- **UI Enhancements**: Added dedicated "Export Markdown" and "Export JSON" buttons to phase cards.
+
+
 ## [0.0.1] - 2025-10-22
 
 ### Added

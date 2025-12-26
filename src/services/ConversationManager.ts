@@ -13,6 +13,7 @@ import { PromptRole, RenderedPrompt } from '../types/prompts';
 import { ContextManager } from './ContextManager';
 import { PhaseGenerator } from './PhaseGenerator';
 import { PhasePlanFormatter } from './PhasePlanFormatter';
+import { StorageService } from './StorageService';
 
 interface SendMessageResult {
   response: string;
@@ -25,8 +26,12 @@ export class ConversationManager {
   private readonly _promptEngine: PromptEngine;
   private readonly _phaseGenerator: PhaseGenerator;
   private readonly _contextManager: ContextManager;
+  private _saveTimeouts: Map<string, NodeJS.Timeout> = new Map();
 
-  constructor(private readonly _providerRegistry: ProviderRegistry) {
+  constructor(
+    private readonly _providerRegistry: ProviderRegistry,
+    private readonly _storageService?: StorageService
+  ) {
     this._promptEngine = new PromptEngine();
     this._phaseGenerator = new PhaseGenerator(this._promptEngine);
     this._contextManager = new ContextManager(this._promptEngine);
@@ -51,6 +56,11 @@ export class ConversationManager {
 
     this._conversations.set(id, conversation);
     this._activeConversationId = id;
+
+    // Save immediately
+    this._saveConversation(conversation).catch(err =>
+      console.error('[ConversationManager] Failed to save new conversation:', err)
+    );
 
     return conversation;
   }
@@ -127,6 +137,10 @@ export class ConversationManager {
     conversation.metadata.phaseCount = plan.totalPhases;
     this._touchConversation(conversation);
 
+    if (this._storageService) {
+      await this._storageService.savePhasePlan(conversation.metadata.id, plan);
+    }
+
     const markdown = PhasePlanFormatter.toMarkdown(plan);
     const assistantMessage = this._createMessage('assistant', markdown, {
       phaseData: plan,
@@ -151,14 +165,38 @@ export class ConversationManager {
     conversation.metadata.requirementsSummary = undefined;
     conversation.metadata.state = ConversationState.IDLE;
     this._touchConversation(conversation);
+
+    // Save after clearing
+    this._saveConversation(conversation).catch(err =>
+      console.error('[ConversationManager] Failed to save cleared conversation:', err)
+    );
   }
 
-  deleteConversation(conversationId: string): boolean {
+  async deleteConversation(conversationId: string): Promise<boolean> {
     const deleted = this._conversations.delete(conversationId);
     if (deleted && this._activeConversationId === conversationId) {
       this._activeConversationId = undefined;
     }
+
+    // Delete from storage
+    if (deleted && this._storageService) {
+      await this._storageService.deleteConversation(conversationId);
+    }
+
     return deleted;
+  }
+
+  async renameConversation(conversationId: string, newTitle: string): Promise<void> {
+    const conversation = this.getConversation(conversationId);
+    if (!conversation) {
+      throw new Error(`Conversation not found: ${conversationId}`);
+    }
+
+    conversation.metadata.title = newTitle;
+    this._touchConversation(conversation);
+
+    // Save immediately
+    await this._saveConversation(conversation);
   }
 
   listConversations(): ConversationMetadata[] {
@@ -309,6 +347,10 @@ export class ConversationManager {
 
     conversation.phasePlan = plan;
     conversation.metadata.phaseCount = plan.totalPhases;
+
+    if (this._storageService) {
+      await this._storageService.savePhasePlan(conversation.metadata.id, plan);
+    }
 
     const markdown = PhasePlanFormatter.toMarkdown(plan);
     const assistantMessage = this._createMessage('assistant', markdown, {
@@ -482,6 +524,11 @@ export class ConversationManager {
 
   private _touchConversation(conversation: Conversation): void {
     conversation.metadata.updatedAt = Date.now();
+
+    // Auto-save with debouncing
+    this._saveConversation(conversation).catch(err =>
+      console.error('[ConversationManager] Failed to auto-save conversation:', err)
+    );
   }
 
   private _generateId(prefix: string): string {
@@ -495,5 +542,114 @@ export class ConversationManager {
   private _setState(conversation: Conversation, state: ConversationState): void {
     conversation.metadata.state = state;
     this._touchConversation(conversation);
+  }
+
+  /**
+   * Save conversation to storage with debouncing (300ms)
+   */
+  private async _saveConversation(conversation: Conversation): Promise<void> {
+    if (!this._storageService) {
+      return;
+    }
+
+    const conversationId = conversation.metadata.id;
+
+    // Clear existing timeout
+    const existingTimeout = this._saveTimeouts.get(conversationId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+
+    // Set new debounced save
+    const timeout = setTimeout(async () => {
+      try {
+        await this._storageService!.saveConversation(conversation);
+        await this._storageService!.setActiveConversationId(this._activeConversationId);
+        this._saveTimeouts.delete(conversationId);
+      } catch (error: unknown) {
+        console.error(`[ConversationManager] Failed to save conversation ${conversationId}:`, error);
+      }
+    }, 300);
+
+    this._saveTimeouts.set(conversationId, timeout);
+  }
+
+  /**
+   * Public method to save conversation (e.g. after manual updates)
+   */
+  async saveConversation(conversation: Conversation): Promise<void> {
+    return this._saveConversation(conversation);
+  }
+
+  /**
+   * Load all conversations from storage
+   */
+  async loadConversationsFromStorage(): Promise<void> {
+    if (!this._storageService) {
+      return;
+    }
+
+    try {
+      const conversations = await this._storageService.loadAllConversations();
+      for (const conversation of conversations) {
+        this._conversations.set(conversation.metadata.id, conversation);
+      }
+
+      const activeId = await this._storageService.getActiveConversationId();
+      if (activeId && this._conversations.has(activeId)) {
+        this._activeConversationId = activeId;
+      }
+
+      console.log(`[ConversationManager] Loaded ${conversations.length} conversations from storage`);
+    } catch (error: unknown) {
+      console.error('[ConversationManager] Failed to load conversations from storage:', error);
+    }
+  }
+
+  /**
+   * Switch to a different conversation
+   */
+  async switchToConversation(conversationId: string): Promise<void> {
+    if (!this._conversations.has(conversationId)) {
+      // Try loading from storage
+      if (this._storageService) {
+        const conversation = await this._storageService.loadConversation(conversationId);
+        if (conversation) {
+          this._conversations.set(conversationId, conversation);
+        } else {
+          throw new Error(`Conversation not found: ${conversationId}`);
+        }
+      } else {
+        throw new Error(`Conversation not found: ${conversationId}`);
+      }
+    }
+
+    this._activeConversationId = conversationId;
+
+    if (this._storageService) {
+      await this._storageService.setActiveConversationId(conversationId);
+    }
+  }
+
+  /**
+   * Export a conversation to file
+   */
+  async exportConversation(conversationId: string, format: 'json' | 'markdown'): Promise<void> {
+    if (!this._storageService) {
+      throw new Error('Storage service not available');
+    }
+
+    await this._storageService.exportConversationToFile(conversationId, format);
+  }
+
+  /**
+   * Export a phase plan to file
+   */
+  async exportPhasePlan(conversationId: string, format: 'json' | 'markdown'): Promise<void> {
+    if (!this._storageService) {
+      throw new Error('Storage service not available');
+    }
+
+    await this._storageService.exportPhasePlanToFile(conversationId, format);
   }
 }

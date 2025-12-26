@@ -2,11 +2,22 @@
   "name": "junkrat",
   "displayName": "JunkRat - AI Phase Planner",
   "description": "AI-powered phase planning tool supporting Ollama, Gemini, OpenRouter, and custom LLM providers for VS Code",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "junkrat-dev",
+  "icon": "resources/marketplace/icon-marketplace.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
+  "homepage": "https://github.com/zarigata/JunkRat/blob/main/README.md",
+  "bugs": {
+    "url": "https://github.com/zarigata/JunkRat/issues"
+  },
+  "qna": "marketplace",
+  "preview": true,
   "categories": [
     "Machine Learning",
     "Programming Languages"
@@ -189,6 +200,12 @@
           "minimum": 0,
           "order": 45,
           "markdownDescription": "Number of retry attempts for failed requests."
+        },
+        "junkrat.telemetry.enabled": {
+          "type": "boolean",
+          "default": false,
+          "order": 100,
+          "markdownDescription": "Enable anonymous usage telemetry to help improve JunkRat."
         }
       }
     },
@@ -254,10 +271,12 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run package",
+    "vscode:prepublish": "npm run build",
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
-    "package": "node esbuild.js --production",
+    "build": "node esbuild.js --production",
+    "package": "vsce package",
+    "publish": "vsce publish",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext ts"
   },
@@ -287,6 +306,15 @@
     "gemini",
     "openrouter",
     "code-generation",
-    "openai"
+    "code-generation",
+    "openai",
+    "phase-planning",
+    "project-management",
+    "traycer",
+    "windsurf",
+    "cursor",
+    "roo-code",
+    "aider",
+    "continue"
   ]
 }

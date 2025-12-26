@@ -167,16 +167,35 @@ export class ContextManager {
     conversation: Conversation
   ): ConversationMessage[] {
     const systemMessages = conversation.messages.filter((message) => message.role === 'system');
-    const preservedIds = new Set(systemMessages.map((message) => message.id));
+    const currentMessageIds = new Set(messages.map((message) => message.id));
 
     const merged = [...messages];
 
-    systemMessages.forEach((message) => {
-      if (!preservedIds.has(message.id)) {
-        merged.unshift(message);
-      }
-    });
+    // Iterate in reverse to maintain order when unshifting, or just unshift in correct order?
+    // The original code iterated systemMessages and unshifted.
+    // If we have Sys1, Sys2. Sys1 is missing. We want [Sys1, ...messages].
+    // If we iterate Sys1, Sys2. Sys1 missing -> unshift -> [Sys1, ...]. Sys2 present.
+    // Result: [Sys1, ...]. Correct.
+    // If multiple missing: Sys1, Sys2 both missing.
+    // Sys1 -> unshift -> [Sys1, ...].
+    // Sys2 -> unshift -> [Sys2, Sys1, ...].
+    // This REVERSES the order of system prompts if unshifted one by one.
+    // Original code:
+    // systemMessages.forEach((message) => { ... merged.unshift(message); });
+    // So if Sys1 and Sys2 are both missing, it would result in Sys2, Sys1.
+    // Usually we want preserved order.
+    // Better to identify missing ones and unshift them in REVERSE order of appearance (so the first one ends up at top) OR just collect missing ones and prepend them.
 
-    return merged;
+    // Let's stick to the "verbatim" instruction if possible, or "logic" of the instruction.
+    // Instruction says: "iterate over systemMessages and unshift those whose IDs are not in that set."
+    // It doesn't specify order handling, but unshifting in forward loop reverses order.
+    // I should probably fix the order too because that's implied "preservation".
+    // But the comment specifically says: "iterate over systemMessages and unshift those..."
+    // If I iterate in reverse (last to first), unshifting preserves order.
+    // Let's try to do it right.
+
+    const missingSystemMessages = systemMessages.filter(msg => !currentMessageIds.has(msg.id));
+    // Prepend missing messages to merged
+    return [...missingSystemMessages, ...merged];
   }
 }

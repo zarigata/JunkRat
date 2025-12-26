@@ -9,5 +9,9 @@ esbuild.js
 .github/**
 **/*.md
 !README.md
+!CHANGELOG.md
 **/.DS_Store
 **/*.map
+*.log
+typecheck_errors.txt
+

@@ -7,9 +7,16 @@ import { SettingsHelperProvider } from './providers/SettingsHelperProvider';
 import { ProviderFactory } from './providers/ProviderFactory';
 import { PhaseManager } from './services/PhaseManager';
 import { AgentService } from './services/AgentService';
+import { ConversationManager } from './services/ConversationManager';
+import { StorageService } from './services/StorageService';
+import { TelemetryService } from './services/TelemetryService';
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('JunkRat AI Phase Planner activated');
+
+  // Initialize telemetry
+  const telemetryService = new TelemetryService(context);
+  telemetryService.sendActivationEvent();
 
   // Initialize provider system
   const providerRegistry = new ProviderRegistry();
@@ -19,11 +26,20 @@ export async function activate(context: vscode.ExtensionContext) {
   const phaseManager = new PhaseManager();
   const agentService = new AgentService();
 
+  // Create StorageService for conversation persistence
+  const storageService = new StorageService(context);
+
+  // Create ConversationManager with StorageService
+  const conversationManager = new ConversationManager(providerRegistry, storageService);
+
+  // Load conversations from storage
+  await conversationManager.loadConversationsFromStorage();
+
   // Create ChatService
-  const chatService = new ChatService(providerRegistry, phaseManager, agentService);
+  const chatService = new ChatService(providerRegistry, phaseManager, agentService, conversationManager);
 
   // Register chat view provider with ChatService
-  const chatProvider = new ChatViewProvider(context.extensionUri, chatService, configurationService);
+  const chatProvider = new ChatViewProvider(context.extensionUri, chatService, configurationService, telemetryService);
   const chatViewRegistration = vscode.window.registerWebviewViewProvider(
     'junkrat.chatView',
     chatProvider,

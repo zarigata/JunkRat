@@ -28,7 +28,7 @@ export class SettingsHelperProvider implements vscode.WebviewViewProvider {
     private readonly _extensionUri: vscode.Uri,
     private readonly _configService: ConfigurationService,
     private readonly _providerRegistry: ProviderRegistry
-  ) {}
+  ) { }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void | Thenable<void> {
     this._view = webviewView;

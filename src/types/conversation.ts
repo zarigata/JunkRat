@@ -15,6 +15,10 @@ export interface ConversationMetadata {
   updatedAt: number;
   phaseCount?: number;
   requirementsSummary?: string;
+  lastMessagePreview?: string; // First 100 chars of last message
+  messageCount?: number; // Total message count
+  tags?: string[]; // User-defined tags for organization
+  lastModified?: number; // Alias for updatedAt for consistency
 }
 
 export type ConversationMessageRole = 'user' | 'assistant' | 'system';

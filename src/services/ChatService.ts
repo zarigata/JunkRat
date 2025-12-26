@@ -251,4 +251,60 @@ export class ChatService {
 
     return this._conversationManager.regeneratePhasePlan(targetConversationId, providerId);
   }
+
+  listConversations(): import('../types/conversation').ConversationMetadata[] {
+    if (!this._useConversationManager || !this._conversationManager) {
+      return [];
+    }
+
+    return this._conversationManager.listConversations();
+  }
+
+  async switchToConversation(conversationId: string): Promise<void> {
+    if (!this._useConversationManager || !this._conversationManager) {
+      throw new Error('Conversation manager not enabled');
+    }
+
+    await this._conversationManager.switchToConversation(conversationId);
+  }
+
+  async deleteConversation(conversationId: string): Promise<boolean> {
+    if (!this._useConversationManager || !this._conversationManager) {
+      return false;
+    }
+
+    return this._conversationManager.deleteConversation(conversationId);
+  }
+
+  async exportConversation(conversationId: string, format: 'json' | 'markdown'): Promise<void> {
+    if (!this._useConversationManager || !this._conversationManager) {
+      throw new Error('Conversation manager not enabled');
+    }
+
+    await this._conversationManager.exportConversation(conversationId, format);
+  }
+
+  async exportPhasePlan(conversationId: string, format: 'json' | 'markdown'): Promise<void> {
+    if (!this._useConversationManager || !this._conversationManager) {
+      throw new Error('Conversation manager not enabled');
+    }
+
+    await this._conversationManager.exportPhasePlan(conversationId, format);
+  }
+
+  async renameConversation(conversationId: string, newTitle: string): Promise<void> {
+    if (!this._useConversationManager || !this._conversationManager) {
+      throw new Error('Conversation manager not enabled');
+    }
+
+    await this._conversationManager.renameConversation(conversationId, newTitle);
+  }
+
+  async saveConversation(conversation: import('../types/conversation').Conversation): Promise<void> {
+    if (!this._useConversationManager || !this._conversationManager) {
+      throw new Error('Conversation manager not enabled');
+    }
+
+    await this._conversationManager.saveConversation(conversation);
+  }
 }

@@ -7,7 +7,9 @@ import {
   ConversationMetadata,
   ConversationState,
   PhasePlan,
+  Phase,
 } from '../types/conversation';
+import { PhaseManager } from './PhaseManager';
 import { PromptEngine } from './PromptEngine';
 import { PromptRole, RenderedPrompt } from '../types/prompts';
 import { ContextManager } from './ContextManager';
@@ -651,5 +653,85 @@ export class ConversationManager {
     }
 
     await this._storageService.exportPhasePlanToFile(conversationId, format);
+  }
+
+  async addPhaseWithAI(
+    conversationId: string,
+    userPrompt: string,
+    afterPhaseId: string | null,
+    providerId?: string
+  ): Promise<PhasePlan> {
+    const conversation = this.getConversation(conversationId);
+    if (!conversation || !conversation.phasePlan) {
+      throw new Error('Conversation or phase plan not found');
+    }
+
+    const provider = this._resolveProvider(providerId);
+
+    const newPhase = await this._phaseGenerator.generateSinglePhase(
+      userPrompt,
+      conversation.phasePlan,
+      afterPhaseId,
+      provider
+    );
+
+    const phaseManager = new PhaseManager();
+    phaseManager.setActivePlan(conversation.phasePlan);
+    phaseManager.insertPhase(newPhase, afterPhaseId);
+
+    conversation.phasePlan = phaseManager.getActivePlan()!;
+    conversation.metadata.phaseCount = conversation.phasePlan.totalPhases;
+    this._touchConversation(conversation);
+
+    if (this._storageService) {
+      await this._storageService.savePhasePlan(conversationId, conversation.phasePlan);
+    }
+
+    return conversation.phasePlan;
+  }
+
+  async editPhase(
+    conversationId: string,
+    phaseId: string,
+    updates: Partial<Phase>
+  ): Promise<PhasePlan> {
+    const conversation = this.getConversation(conversationId);
+    if (!conversation || !conversation.phasePlan) {
+      throw new Error('Conversation or phase plan not found');
+    }
+
+    const phaseManager = new PhaseManager();
+    phaseManager.setActivePlan(conversation.phasePlan);
+    phaseManager.editPhase(phaseId, updates);
+
+    conversation.phasePlan = phaseManager.getActivePlan()!;
+    this._touchConversation(conversation);
+
+    if (this._storageService) {
+      await this._storageService.savePhasePlan(conversationId, conversation.phasePlan);
+    }
+
+    return conversation.phasePlan;
+  }
+
+  async deletePhase(conversationId: string, phaseId: string): Promise<PhasePlan> {
+    const conversation = this.getConversation(conversationId);
+    if (!conversation || !conversation.phasePlan) {
+      throw new Error('Conversation or phase plan not found');
+    }
+
+    const phaseManager = new PhaseManager();
+    phaseManager.setActivePlan(conversation.phasePlan);
+    phaseManager.deletePhase(phaseId);
+
+    conversation.phasePlan = phaseManager.getActivePlan()!;
+    conversation.metadata.phaseCount = conversation.phasePlan.totalPhases;
+    this._touchConversation(conversation);
+
+    if (this._storageService) {
+      await this._storageService.savePhasePlan(conversationId, conversation.phasePlan);
+    }
+
+    return conversation.phasePlan;
   }
 }

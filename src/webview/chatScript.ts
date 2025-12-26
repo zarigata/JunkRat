@@ -160,6 +160,12 @@ export function getChatScript(): string {
 
         headerDiv.appendChild(titleDiv);
 
+        const addPhaseBtn = document.createElement('button');
+        addPhaseBtn.className = 'add-phase-btn';
+        addPhaseBtn.innerHTML = '<span class="codicon codicon-add"></span> Add Phase';
+        addPhaseBtn.onclick = () => showAddPhaseDialog(null);
+        headerDiv.appendChild(addPhaseBtn);
+
         const contentDiv = document.createElement('div');
         contentDiv.className = 'phase-plan-content';
 
@@ -189,6 +195,50 @@ export function getChatScript(): string {
             if (phase.status === 'completed') {
               phaseHeader.innerHTML += '<button class="verify-phase-btn update-phase-btn" data-phase-id="' + phase.id + '">' +
                 '<span class="codicon codicon-check-all"></span>Mark as Verified</button>';
+            }
+
+            // Edit/Delete buttons (only for pending phases)
+            if (phase.status === 'pending') {
+              const actionsSpan = document.createElement('span');
+              actionsSpan.className = 'phase-actions';
+              
+              const editBtn = document.createElement('button');
+              editBtn.className = 'phase-action-btn edit-phase-btn';
+              editBtn.innerHTML = '<span class="codicon codicon-edit"></span>';
+              editBtn.title = 'Edit Phase';
+              editBtn.onclick = (e) => {
+                e.stopPropagation();
+                showEditPhaseDialog(phase.id, phase.title, phase.description);
+              };
+
+              const deleteBtn = document.createElement('button');
+              deleteBtn.className = 'phase-action-btn delete-phase-btn';
+              deleteBtn.innerHTML = '<span class="codicon codicon-trash"></span>';
+              deleteBtn.title = 'Delete Phase';
+              deleteBtn.onclick = (e) => {
+                e.stopPropagation();
+                vscode.postMessage({
+                  type: 'deletePhase',
+                  payload: {
+                    conversationId: plan.conversationId,
+                    phaseId: phase.id
+                  }
+                });
+              };
+              
+              const addAfterBtn = document.createElement('button');
+              addAfterBtn.className = 'phase-action-btn add-after-btn';
+              addAfterBtn.innerHTML = '<span class="codicon codicon-plus"></span>';
+              addAfterBtn.title = 'Add Phase After This';
+              addAfterBtn.onclick = (e) => {
+                 e.stopPropagation();
+                 showAddPhaseDialog(phase.id);
+              };
+
+              actionsSpan.appendChild(editBtn);
+              actionsSpan.appendChild(deleteBtn);
+              actionsSpan.appendChild(addAfterBtn);
+              phaseHeader.appendChild(actionsSpan);
             }
 
             phaseItem.appendChild(phaseHeader);
@@ -349,6 +399,130 @@ export function getChatScript(): string {
         }
 
         setState();
+      }
+
+      function showAddPhaseDialog(afterPhaseId) {
+        // Create modal container
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        
+        const content = document.createElement('div');
+        content.className = 'modal-content';
+        
+        const header = document.createElement('h3');
+        header.textContent = afterPhaseId ? 'Add Phase After' : 'Add New Phase';
+        
+        const input = document.createElement('textarea');
+        input.className = 'modal-input';
+        input.placeholder = 'Describe the new phase...';
+        input.rows = 4;
+        
+        const actions = document.createElement('div');
+        actions.className = 'modal-actions';
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.className = 'modal-btn secondary';
+        cancelBtn.onclick = () => modal.remove();
+        
+        const confirmBtn = document.createElement('button');
+        confirmBtn.textContent = 'Generate Phase';
+        confirmBtn.className = 'modal-btn primary';
+        confirmBtn.onclick = () => {
+          const prompt = input.value.trim();
+          if (prompt) {
+            vscode.postMessage({
+              type: 'addPhase',
+              payload: {
+                conversationId: currentPhasePlan.conversationId,
+                userPrompt: prompt,
+                afterPhaseId: afterPhaseId
+              }
+            });
+            modal.remove();
+          }
+        };
+        
+        actions.appendChild(cancelBtn);
+        actions.appendChild(confirmBtn);
+        
+        content.appendChild(header);
+        content.appendChild(input);
+        content.appendChild(actions);
+        modal.appendChild(content);
+        
+        document.body.appendChild(modal);
+        input.focus();
+      }
+
+      function showEditPhaseDialog(phaseId, currentTitle, currentDescription) {
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        
+        const content = document.createElement('div');
+        content.className = 'modal-content';
+        
+        const header = document.createElement('h3');
+        header.textContent = 'Edit Phase';
+        
+        const titleLabel = document.createElement('label');
+        titleLabel.textContent = 'Title';
+        const titleInput = document.createElement('input');
+        titleInput.className = 'modal-input';
+        titleInput.type = 'text';
+        titleInput.value = currentTitle;
+        
+        const descLabel = document.createElement('label');
+        descLabel.textContent = 'Description';
+        const descInput = document.createElement('textarea');
+        descInput.className = 'modal-input';
+        descInput.value = currentDescription;
+        descInput.rows = 4;
+        
+        const actions = document.createElement('div');
+        actions.className = 'modal-actions';
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.className = 'modal-btn secondary';
+        cancelBtn.onclick = () => modal.remove();
+        
+        const confirmBtn = document.createElement('button');
+        confirmBtn.textContent = 'Save Changes';
+        confirmBtn.className = 'modal-btn primary';
+        confirmBtn.onclick = () => {
+          const newTitle = titleInput.value.trim();
+          const newDesc = descInput.value.trim();
+          
+          if (newTitle && newDesc) {
+            vscode.postMessage({
+              type: 'editPhase',
+              payload: {
+                conversationId: currentPhasePlan.conversationId,
+                phaseId: phaseId,
+                updates: {
+                  title: newTitle,
+                  description: newDesc
+                }
+              }
+            });
+            modal.remove();
+          }
+        };
+        
+        actions.appendChild(cancelBtn);
+        actions.appendChild(confirmBtn);
+        
+        content.appendChild(header);
+        content.appendChild(titleLabel);
+        content.appendChild(titleInput);
+        content.appendChild(descLabel);
+        content.appendChild(descInput);
+        content.appendChild(actions);
+        modal.appendChild(content);
+        
+        document.body.appendChild(modal);
+        titleInput.focus();
       }
 
       /**
@@ -659,6 +833,19 @@ export function getChatScript(): string {
             renderMessage(errorMessage);
             setState();
             break;
+
+          case 'phaseAdded':
+            // Handle phase added message if needed (e.g. show toast)
+            // The phasePlan message is usually sent after addPhase, handling re-render
+            break;
+            
+          case 'phaseEdited':
+             // Handle phase edited
+             break;
+
+          case 'phaseDeleted':
+             // Handle phase deleted
+             break;
             
           case 'clearChat':
             clearMessages();

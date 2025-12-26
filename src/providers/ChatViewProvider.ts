@@ -16,7 +16,7 @@ import {
 import { ConfigurationService } from '../services/ConfigurationService';
 import { ProviderFactory } from './ProviderFactory';
 import { ProviderId } from '../types/configuration';
-import { PhasePlan, PhaseTask } from '../types/conversation';
+import { PhasePlan, PhaseTask, Phase } from '../types/conversation';
 import { PhasePlanFormatter } from '../services/PhasePlanFormatter';
 import { OllamaProvider, OllamaModelInfo } from './OllamaProvider';
 import { PhaseManager } from '../services/PhaseManager';
@@ -404,6 +404,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           message.payload.toolName
         );
         break;
+
+      case 'addPhase':
+        await this._handleAddPhase(
+          message.payload.conversationId,
+          message.payload.userPrompt,
+          message.payload.afterPhaseId
+        );
+        break;
+
+      case 'editPhase':
+        await this._handleEditPhase(
+          message.payload.conversationId,
+          message.payload.phaseId,
+          message.payload.updates
+        );
+        break;
+
+      case 'deletePhase':
+        await this._handleDeletePhase(message.payload.conversationId, message.payload.phaseId);
+        break;
     }
   }
 
@@ -772,6 +792,102 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // Optional: Send a temporary message indicating AI is processing
     // For now, we'll just log. In future phases, this could show a typing indicator
     console.log('AI is processing the request...');
+  }
+
+  private async _handleAddPhase(
+    conversationId: string,
+    userPrompt: string,
+    afterPhaseId: string | null
+  ): Promise<void> {
+    try {
+      this._sendThinkingIndicator();
+
+      const plan = await this._chatService.addPhaseWithAI(
+        userPrompt,
+        afterPhaseId,
+        conversationId
+      );
+
+      this._sendPhasePlan(plan);
+
+      this.sendMessageToWebview({
+        type: 'phaseAdded',
+        payload: {
+          phasePlan: plan,
+          conversationId: plan.conversationId,
+        },
+      });
+
+      this._telemetryService?.sendEvent('addPhase');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add phase';
+      this.sendMessageToWebview({
+        type: 'error',
+        payload: { error: message },
+      });
+    }
+  }
+
+  private async _handleEditPhase(
+    conversationId: string,
+    phaseId: string,
+    updates: Partial<Phase>
+  ): Promise<void> {
+    try {
+      const plan = await this._chatService.editPhase(phaseId, updates, conversationId);
+
+      this._sendPhasePlan(plan);
+
+      this.sendMessageToWebview({
+        type: 'phaseEdited',
+        payload: {
+          phasePlan: plan,
+          conversationId: plan.conversationId,
+        },
+      });
+
+      this._telemetryService?.sendEvent('editPhase');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to edit phase';
+      this.sendMessageToWebview({
+        type: 'error',
+        payload: { error: message },
+      });
+    }
+  }
+
+  private async _handleDeletePhase(conversationId: string, phaseId: string): Promise<void> {
+    try {
+      const result = await vscode.window.showWarningMessage(
+        'Are you sure you want to delete this phase?',
+        { modal: true },
+        'Delete'
+      );
+
+      if (result !== 'Delete') {
+        return;
+      }
+
+      const plan = await this._chatService.deletePhase(phaseId, conversationId);
+
+      this._sendPhasePlan(plan);
+
+      this.sendMessageToWebview({
+        type: 'phaseDeleted',
+        payload: {
+          phasePlan: plan,
+          conversationId: plan.conversationId,
+        },
+      });
+
+      this._telemetryService?.sendEvent('deletePhase');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete phase';
+      this.sendMessageToWebview({
+        type: 'error',
+        payload: { error: message },
+      });
+    }
   }
 
   private async _initializeProviderList(): Promise<void> {

@@ -4,6 +4,7 @@ import {
   Conversation,
   ConversationState,
   PhasePlan,
+  Phase,
 } from '../types/conversation';
 import { ConversationManager } from './ConversationManager';
 import { PhaseManager } from './PhaseManager';
@@ -306,5 +307,61 @@ export class ChatService {
     }
 
     await this._conversationManager.saveConversation(conversation);
+  }
+
+  async addPhaseWithAI(
+    userPrompt: string,
+    afterPhaseId: string | null,
+    conversationId?: string,
+    providerId?: string
+  ): Promise<PhasePlan> {
+    if (!this._useConversationManager || !this._conversationManager) {
+      throw new Error('Conversation manager not enabled');
+    }
+
+    const targetConversationId =
+      conversationId ?? this._conversationManager.getActiveConversation()?.metadata.id;
+    if (!targetConversationId) {
+      throw new Error('No active conversation');
+    }
+
+    return this._conversationManager.addPhaseWithAI(
+      targetConversationId,
+      userPrompt,
+      afterPhaseId,
+      providerId
+    );
+  }
+
+  async editPhase(
+    phaseId: string,
+    updates: Partial<Phase>,
+    conversationId?: string
+  ): Promise<PhasePlan> {
+    if (!this._useConversationManager || !this._conversationManager) {
+      throw new Error('Conversation manager not enabled');
+    }
+
+    const targetConversationId =
+      conversationId ?? this._conversationManager.getActiveConversation()?.metadata.id;
+    if (!targetConversationId) {
+      throw new Error('No active conversation');
+    }
+
+    return this._conversationManager.editPhase(targetConversationId, phaseId, updates);
+  }
+
+  async deletePhase(phaseId: string, conversationId?: string): Promise<PhasePlan> {
+    if (!this._useConversationManager || !this._conversationManager) {
+      throw new Error('Conversation manager not enabled');
+    }
+
+    const targetConversationId =
+      conversationId ?? this._conversationManager.getActiveConversation()?.metadata.id;
+    if (!targetConversationId) {
+      throw new Error('No active conversation');
+    }
+
+    return this._conversationManager.deletePhase(targetConversationId, phaseId);
   }
 }

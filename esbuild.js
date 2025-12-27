@@ -14,7 +14,8 @@ async function main() {
     target: 'node18',
     sourcemap: !production,
     minify: production,
-    logLevel: 'info',
+    logLevel: production ? 'warning' : 'info',
+    logOverride: production ? { 'duplicate-case': 'error' } : {},
   });
 
   if (watch) {

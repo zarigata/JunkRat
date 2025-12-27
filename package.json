@@ -198,6 +198,80 @@
           "default": false,
           "order": 100,
           "markdownDescription": "Enable anonymous usage telemetry to help improve JunkRat."
+        },
+        "junkrat.workspace.autoAnalyze": {
+          "type": "boolean",
+          "default": true,
+          "order": 50,
+          "markdownDescription": "Automatically analyze workspace context when generating phase plans."
+        },
+        "junkrat.workspace.excludePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/out/**"
+          ],
+          "order": 51,
+          "markdownDescription": "Glob patterns to exclude from workspace analysis."
+        },
+        "junkrat.workspace.maxFiles": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 100,
+          "maximum": 10000,
+          "order": 52,
+          "markdownDescription": "Maximum number of files to analyze for statistics."
+        },
+        "junkrat.git.maxCommits": {
+          "type": "number",
+          "default": 100,
+          "description": "Maximum number of recent commits to scan for phase matching",
+          "order": 60
+        },
+        "junkrat.git.autoUpdateThreshold": {
+          "type": "number",
+          "default": 0.6,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum confidence score (0-1) required to auto-update phase status from git",
+          "order": 61
+        },
+        "junkrat.runAnalysis.enabled": {
+          "type": "boolean",
+          "default": false,
+          "order": 70,
+          "markdownDescription": "Enable run & analyze feature for automated testing and verification."
+        },
+        "junkrat.runAnalysis.command": {
+          "type": "string",
+          "default": "npm test",
+          "order": 71,
+          "markdownDescription": "Command to execute for run analysis (e.g., `npm test`, `npm run build`, `cargo test`)."
+        },
+        "junkrat.runAnalysis.workingDirectory": {
+          "type": "string",
+          "default": "",
+          "order": 72,
+          "markdownDescription": "Working directory for command execution (leave empty to use workspace root)."
+        },
+        "junkrat.runAnalysis.timeout": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 10000,
+          "order": 73,
+          "markdownDescription": "Maximum execution time in milliseconds (default: 2 minutes)."
+        },
+        "junkrat.runAnalysis.autoVerifyOnSuccess": {
+          "type": "boolean",
+          "default": false,
+          "order": 74,
+          "markdownDescription": "Automatically mark phases as verified when tests pass."
         }
       }
     },
@@ -277,7 +351,11 @@
     "package": "vsce package",
     "publish": "vsce publish",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "lint:fix": "eslint src --ext ts --fix",
+    "validate": "npm run typecheck && npm run lint",
+    "prepackage": "npm run validate && npm run build",
+    "prepublish": "npm run validate && npm run build"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.36"

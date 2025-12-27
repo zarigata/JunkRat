@@ -102,11 +102,24 @@ export class OllamaProvider implements IAIProvider {
 
       return await retry(async () => {
         const controller = this._createAbortController(request.signal, this.config.timeout);
+
+        // Auto-detect model if configured one is missing
+        let modelToUse = request.model || this.config.model;
+        try {
+          const models = await this.listModels();
+          if (models.length > 0 && !models.includes(modelToUse)) {
+            console.warn(`Configured model '${modelToUse}' not found. Using '${models[0]}' instead.`);
+            modelToUse = models[0];
+          }
+        } catch (e) {
+          console.warn('Failed to auto-detect models:', e);
+        }
+
         const response = await fetch(`${this.config.baseUrl}/api/chat`, {
           method: 'POST',
           headers: this._buildHeaders(),
           body: JSON.stringify({
-            model: request.model || this.config.model,
+            model: modelToUse,
             messages: request.messages,
             stream: false,
             options: request.temperature !== undefined ? { temperature: request.temperature } : undefined,
@@ -148,11 +161,24 @@ export class OllamaProvider implements IAIProvider {
 
       const response = await retry(async () => {
         const controller = this._createAbortController(request.signal, this.config.timeout);
+
+        // Auto-detect model if configured one is missing (copied from chat())
+        let modelToUse = request.model || this.config.model;
+        try {
+          const models = await this.listModels();
+          if (models.length > 0 && !models.includes(modelToUse)) {
+            console.warn(`Configured model '${modelToUse}' not found. Using '${models[0]}' instead.`);
+            modelToUse = models[0];
+          }
+        } catch (e) {
+          console.warn('Failed to auto-detect models:', e);
+        }
+
         const result = await fetch(`${this.config.baseUrl}/api/chat`, {
           method: 'POST',
           headers: this._buildHeaders(),
           body: JSON.stringify({
-            model: request.model || this.config.model,
+            model: modelToUse,
             messages: request.messages,
             stream: true,
             options: request.temperature !== undefined ? { temperature: request.temperature } : undefined,

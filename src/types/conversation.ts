@@ -19,6 +19,8 @@ export interface ConversationMetadata {
   messageCount?: number; // Total message count
   tags?: string[]; // User-defined tags for organization
   lastModified?: number; // Alias for updatedAt for consistency
+  workspaceAnalyzed?: boolean;
+  workspaceAnalyzedAt?: number;
 }
 
 export type ConversationMessageRole = 'user' | 'assistant' | 'system';

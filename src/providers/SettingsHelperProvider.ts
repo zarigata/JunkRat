@@ -27,7 +27,8 @@ export class SettingsHelperProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly _extensionUri: vscode.Uri,
     private readonly _configService: ConfigurationService,
-    private readonly _providerRegistry: ProviderRegistry
+    private readonly _providerRegistry: ProviderRegistry,
+    private readonly _outputChannel?: vscode.OutputChannel
   ) { }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void | Thenable<void> {
@@ -61,6 +62,10 @@ export class SettingsHelperProvider implements vscode.WebviewViewProvider {
         await this._sendProviderStatus();
         break;
 
+      case 'webviewError':
+        this._handleWebviewError(message.payload);
+        break;
+
       case 'openSettings':
         await this._configService.openSettings(message.payload?.settingId);
         break;
@@ -81,6 +86,27 @@ export class SettingsHelperProvider implements vscode.WebviewViewProvider {
         await this._sendProviderStatus();
         break;
     }
+  }
+
+  private _handleWebviewError(payload: any): void {
+    const errorMessage = payload.message || 'Unknown settings webview error';
+    const source = payload.source ? ` in ${payload.source}` : '';
+    const location = payload.line ? ` at line ${payload.line}:${payload.column || 0}` : '';
+    const stack = payload.stack || '';
+    const fullMessage = `[Settings Webview Error] ${errorMessage}${source}${location}`;
+
+    console.error(fullMessage);
+    if (this._outputChannel) {
+      this._outputChannel.appendLine(fullMessage);
+      if (stack) {
+        this._outputChannel.appendLine(stack);
+      }
+    }
+
+    // Show notification for critical errors
+    vscode.window.showWarningMessage(
+      `JunkRat Settings Error: ${errorMessage}. Please check the configuration.`
+    );
   }
 
   private async _handleTestProvider(providerId?: string): Promise<void> {

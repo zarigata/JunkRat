@@ -271,6 +271,16 @@ export interface NoProvidersReadyMessage {
   payload: {
     message: string;
     showOnboarding: boolean;
+    allowSkip?: boolean;
+  };
+}
+
+export interface OnboardingActionMessage {
+  type: 'onboardingAction';
+  payload: {
+    action: string;
+    timestamp: number;
+    context?: Record<string, any>;
   };
 }
 
@@ -289,6 +299,70 @@ export interface ExportAllConversationsMessage {
   type: 'exportAllConversations';
   payload: {
     format: 'json' | 'markdown';
+  };
+}
+
+export interface AnalyzeWorkspaceMessage {
+  type: 'analyzeWorkspace';
+}
+
+export interface WorkspaceAnalyzedMessage {
+  type: 'workspaceAnalyzed';
+  context: import('../services/ContextManager').WorkspaceContext;
+  summary: string;
+}
+
+export interface ScanGitProgressMessage {
+  type: 'scanGitProgress';
+  payload: {
+    dryRun: boolean;
+  };
+}
+
+export interface RunAndAnalyzeMessage {
+  type: 'runAndAnalyze';
+  payload: {
+    phaseId?: string; // Optional: analyze specific phase
+    command?: string; // Optional: override default command
+  };
+}
+
+export interface RunAnalysisCompleteMessage {
+  type: 'runAnalysisComplete';
+  payload: {
+    success: boolean;
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    duration: number; // milliseconds
+    command: string;
+    analysis?: {
+      summary: string;
+      affectedPhases: Array<{
+        phaseId: string;
+        status: 'passed' | 'failed' | 'skipped';
+        reason: string;
+      }>;
+      suggestions: string[];
+    };
+  };
+}
+
+export interface GitScanCompleteMessage {
+  type: 'gitScanComplete';
+  payload: {
+    updated: number;
+    results: Array<{
+      phaseId: string;
+      matchedCommits: Array<{
+        hash: string;
+        message: string;
+        author: string;
+        date: Date; // or string if serialized
+        files: string[];
+      }>;
+      confidence: number;
+    }>;
   };
 }
 
@@ -334,8 +408,27 @@ export type WebviewMessage =
   | SwitchProviderAndRetryMessage
   | RefreshModelsMessage
   | TestOllamaConnectionMessage
+  | TestOllamaConnectionMessage
   | OpenExternalLinkMessage
-  | ExportAllConversationsMessage;
+  | ExportAllConversationsMessage
+  | ExportAllConversationsMessage
+  | AnalyzeWorkspaceMessage
+  | ScanGitProgressMessage
+  | ScanGitProgressMessage
+  | RunAndAnalyzeMessage
+  | OnboardingActionMessage
+  | WebviewErrorMessage;
+
+export interface WebviewErrorMessage {
+  type: 'webviewError';
+  payload: {
+    message: string;
+    source?: string;
+    line?: number;
+    column?: number;
+    stack?: string;
+  };
+}
 
 export interface ExecuteTaskInGeminiCLIMessage {
   type: 'executeTaskInGeminiCLI';
@@ -466,6 +559,9 @@ export interface ProviderStatusUpdateMessage {
         available: boolean;
       }
     >;
+  } | {
+    providerId: string;
+    available: boolean;
   };
 }
 
@@ -578,7 +674,12 @@ export type ExtensionMessage =
   | PhaseDeletedMessage
   | PhaseProgressMessage
   | NoProvidersReadyMessage
-  | NextActionSuggestionsMessage;
+  | NoProvidersReadyMessage
+  | NextActionSuggestionsMessage
+  | NextActionSuggestionsMessage
+  | WorkspaceAnalyzedMessage
+  | GitScanCompleteMessage
+  | RunAnalysisCompleteMessage;
 
 export interface PhaseProgressMessage {
   type: 'phaseProgress';

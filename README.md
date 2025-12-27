@@ -34,6 +34,12 @@ JunkRat is a VS Code extension that transforms your coding ideas into structured
 - **Phase Plan Export**: Export your plans to Markdown or JSON for documentation or external use.
 - **Auto-Refresh**: Automatically detects when local providers (like Ollama) come online.
 
+### 🏃 Run & Analyze
+- **Intelligent Verification**: Execute project commands (like `npm test`) directly from the sidebar.
+- **AI Analysis**: Captures stdout/stderr, analyzes failures, and identifies which phases are affected.
+- **Auto-Verification**: Automatically marks phases as verified if tests pass.
+- **Actionable Insights**: Provides suggestions and reasonings for test results.
+
 ## 📦 Installation
 
 ### From VS Code Marketplace
@@ -73,6 +79,9 @@ JunkRat is highly configurable. Open VS Code Settings (`Ctrl+,`) and search for 
 | `junkrat.custom.baseUrl` | - | Custom OpenAI-compatible API endpoint. |
 | `junkrat.custom.apiKey` | - | API key for custom endpoint. |
 | `junkrat.telemetry.enabled`| `false` | Enable anonymous usage telemetry (optional). |
+| `junkrat.runAnalysis.enabled` | `false` | Enable the Run & Analyze feature. |
+| `junkrat.runAnalysis.command` | `npm test` | Shell command to execute for analysis. |
+| `junkrat.runAnalysis.autoVerifyOnSuccess` | `false` | Auto-verify passing phases. |
 
 ## 🚀 Usage Guide
 
@@ -93,6 +102,10 @@ Once the plan is generated:
 - **Export**:
   - Click **Export Markdown** to save the plan as a documentation file.
   - Click **Export JSON** to save structured data.
+- **Run & Analyze**:
+  - Click **Run & Analyze** to execute your test suite.
+  - View AI analysis of results and suggestions.
+  - Auto-verify phases if tests pass.
 
 ### Conversation Management
 - **History**: Click the history icon (clock) to switch between planning sessions.
@@ -123,6 +136,14 @@ We welcome contributions!
 4. Open a Pull Request.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
+
+## Development Workflow
+
+Before committing changes, always run:
+```bash
+npm run validate
+```
+This ensures code quality by running both typecheck and linting (including duplicate case detection).
 
 ## 🛣️ Roadmap
 - [ ] VS Code Workspace Integration (read local files for context)

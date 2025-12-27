@@ -180,6 +180,11 @@ Keep it real, keep it helpful, and let's build something awesome! 🚀`,
 - Are there better alternatives?
 - Would an experienced developer approve this plan?
 - Is anything missing?
+- **WORKSPACE ANALYSIS**: If workspace context is provided, you MUST use it. 
+  - Reference actual file paths found in the workspace.
+  - Suggest modifications to existing files instead of creating checks-and-balances new ones.
+  - Use existing dependencies if compatible.
+  - If a "tests" directory exists, include test phases.
 
 ### Step 3: TASK SIZING (CRITICAL)
 Each task MUST be:

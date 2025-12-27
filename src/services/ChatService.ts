@@ -39,6 +39,13 @@ export class ChatService {
     }
   }
 
+  async analyzeWorkspace(): Promise<import('./ContextManager').WorkspaceContext | undefined> {
+    if (!this._conversationManager) {
+      return undefined;
+    }
+    return this._conversationManager.analyzeWorkspace();
+  }
+
   async sendMessage(
     userMessage: string,
     providerId?: string
@@ -54,6 +61,15 @@ export class ChatService {
     const attemptedProviders = new Set<string>();
     let currentProviderId = providerId;
 
+    // Graceful degradation: If no providers are configured, return helpful mock response
+    if (this._registry.listProviders().length === 0) {
+      const mockResponse = "⚠️ No AI providers are configured. Please configure a provider in Settings to start chatting.\n\n**Quick Setup:**\n- **Ollama (Recommended)**: Install Ollama locally and it will auto-connect\n- **Gemini**: Add your Google API key in settings\n- **OpenRouter**: Add your OpenRouter API key\n\nClick the settings icon in the chat header to get started.";
+
+      this._conversationHistory.push({ role: 'assistant', content: mockResponse });
+      return mockResponse;
+    }
+
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       let provider = this._registry.getProvider(currentProviderId);
 
@@ -154,6 +170,7 @@ export class ChatService {
     let currentProviderId = providerId;
     let hasReceivedData = false;
 
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       let provider = this._registry.getProvider(currentProviderId);
 
@@ -455,5 +472,9 @@ export class ChatService {
     }
 
     this._conversationManager.transitionState(conversationId, newState);
+  }
+
+  getPhaseManager(): PhaseManager {
+    return this._phaseManager;
   }
 }

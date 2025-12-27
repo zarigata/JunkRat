@@ -6,7 +6,22 @@ import {
   ConversationState,
 } from '../types/conversation';
 import { PromptEngine } from './PromptEngine';
+import * as vscode from 'vscode';
 import { PromptRole } from '../types/prompts';
+
+export interface WorkspaceContext {
+  projectRoot: string;
+  fileCount: number;
+  filesByType: Record<string, number>;
+  topLevelDirectories: string[];
+  technologies: string[];
+  dependencies?: Record<string, string>;
+  gitBranch?: string;
+  gitStatus?: { modified: number; added: number; deleted: number };
+  openFiles: string[];
+  hasTests: boolean;
+  hasDocumentation: boolean;
+}
 
 interface ContextManagerConfig {
   maxContextTokens?: number;
@@ -197,5 +212,229 @@ export class ContextManager {
     const missingSystemMessages = systemMessages.filter(msg => !currentMessageIds.has(msg.id));
     // Prepend missing messages to merged
     return [...missingSystemMessages, ...merged];
+  }
+
+  // --- Workspace Analysis ---
+
+  private _lastWorkspaceContext?: WorkspaceContext;
+  private _lastAnalysisTime: number = 0;
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  async analyzeWorkspace(): Promise<WorkspaceContext | undefined> {
+    // Check cache
+    if (
+      this._lastWorkspaceContext &&
+      Date.now() - this._lastAnalysisTime < this.CACHE_TTL
+    ) {
+      return this._lastWorkspaceContext;
+    }
+
+    if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+      return undefined;
+    }
+
+    const rootPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+
+    try {
+      const [files, gitStatus, openFiles, metadata] = await Promise.all([
+        this._getWorkspaceFiles(),
+        this._getGitStatus(),
+        this._getOpenFiles(),
+        this._getProjectMetadata(rootPath)
+      ]);
+
+      const context: WorkspaceContext = {
+        projectRoot: rootPath,
+        fileCount: files.totalCount,
+        filesByType: files.byType,
+        topLevelDirectories: files.topDirs,
+        technologies: metadata.technologies,
+        dependencies: metadata.dependencies,
+        gitBranch: gitStatus.branch,
+        gitStatus: gitStatus.stats,
+        openFiles: openFiles,
+        hasTests: files.hasTests,
+        hasDocumentation: files.hasDocs
+      };
+
+      this._lastWorkspaceContext = context;
+      this._lastAnalysisTime = Date.now();
+
+      return context;
+    } catch (error) {
+      console.error('Workspace analysis failed:', error);
+      return undefined;
+    }
+  }
+
+  formatWorkspaceContextForPrompt(context: WorkspaceContext): string {
+    const sections: string[] = [];
+
+    sections.push(`**Project Structure**:
+- Root: ${context.projectRoot}
+- Files: ${context.fileCount} (by type: ${Object.entries(context.filesByType)
+        .map(([ext, count]) => `${ext}: ${count}`)
+        .join(', ')})
+- Top-level Dirs: ${context.topLevelDirectories.join(', ')}`);
+
+    if (context.technologies.length > 0) {
+      sections.push(`**Technologies**: ${context.technologies.join(', ')}`);
+    }
+
+    if (context.dependencies && Object.keys(context.dependencies).length > 0) {
+      const deps = Object.entries(context.dependencies)
+        .slice(0, 15) // Limit to 15 key dependencies to save tokens
+        .map(([name, ver]) => `${name}: ${ver}`)
+        .join(', ');
+      sections.push(`**Key Dependencies**: ${deps}`);
+    }
+
+    if (context.gitBranch) {
+      const stats = context.gitStatus
+        ? `(+${context.gitStatus.added} ~${context.gitStatus.modified} -${context.gitStatus.deleted})`
+        : '';
+      sections.push(`**Git Status**: Branch '${context.gitBranch}' ${stats}`);
+    }
+
+    if (context.openFiles.length > 0) {
+      sections.push(`**Open Files**:
+${context.openFiles.map((f) => `- ${f}`).join('\n')}`);
+    }
+
+    return sections.join('\n\n');
+  }
+
+  private async _getWorkspaceFiles(): Promise<{
+    totalCount: number;
+    byType: Record<string, number>;
+    topDirs: string[];
+    hasTests: boolean;
+    hasDocs: boolean;
+  }> {
+    // Get configuration
+    const config = vscode.workspace.getConfiguration('junkrat.workspace');
+    const maxFiles = config.get<number>('maxFiles') || 1000;
+    const excludePatterns = config.get<string[]>('excludePatterns') || [
+      '**/node_modules/**',
+      '**/.git/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/out/**'
+    ];
+
+    // Construct glob pattern for exclusion
+    const exclude = `{${excludePatterns.join(',')}}`;
+    const files = await vscode.workspace.findFiles('**/*', exclude, maxFiles);
+
+    const byType: Record<string, number> = {};
+    const topDirs = new Set<string>();
+    let hasTests = false;
+    let hasDocs = false;
+
+    files.forEach((file) => {
+      const path = file.path;
+      const ext = path.split('.').pop() || 'no-ext';
+      byType[ext] = (byType[ext] || 0) + 1;
+
+      // Get relative path for top-level dirs
+      const relative = vscode.workspace.asRelativePath(file);
+      const parts = relative.split('/');
+      if (parts.length > 1) {
+        topDirs.add(parts[0]);
+      }
+
+      if (path.includes('.test.') || path.includes('.spec.') || path.includes('/tests/')) {
+        hasTests = true;
+      }
+      if (path.toLowerCase().endsWith('readme.md')) {
+        hasDocs = true;
+      }
+    });
+
+    return {
+      totalCount: files.length,
+      byType,
+      topDirs: Array.from(topDirs).slice(0, 10),
+      hasTests,
+      hasDocs
+    };
+  }
+
+  private async _getGitStatus(): Promise<{
+    branch?: string;
+    stats?: { modified: number; added: number; deleted: number };
+  }> {
+    try {
+      const gitExtension = vscode.extensions.getExtension<any>('vscode.git');
+      if (!gitExtension) { return {}; }
+
+      const git = gitExtension.exports.getAPI(1);
+      if (!git.repositories.length) { return {}; }
+
+      const repo = git.repositories[0];
+      const branch = repo.state.HEAD?.name;
+
+      // Rough count of changes
+      const changes = repo.state.workingTreeChanges.concat(repo.state.indexChanges);
+      const stats = {
+        modified: changes.filter((c: any) => c.status !== 5 && c.status !== 6).length, // 5=Added, 6=Deleted (approx)
+        added: changes.filter((c: any) => c.status === 5).length || 0, // 5 is Untracked/Added
+        deleted: changes.filter((c: any) => c.status === 6).length || 0
+      };
+
+      return { branch, stats };
+    } catch (e) {
+      return {};
+    }
+  }
+
+  private _getOpenFiles(): string[] {
+    return vscode.workspace.textDocuments
+      .filter(doc => !doc.isUntitled && doc.uri.scheme === 'file')
+      .map(doc => vscode.workspace.asRelativePath(doc.uri));
+  }
+
+  private async _getProjectMetadata(rootPath: string): Promise<{
+    technologies: string[];
+    dependencies: Record<string, string>;
+  }> {
+    const techs = new Set<string>();
+    const dependencies: Record<string, string> = {};
+
+    // Check package.json
+    try {
+      const packageJsonUri = vscode.Uri.file(`${rootPath}/package.json`);
+      const content = await vscode.workspace.fs.readFile(packageJsonUri);
+      const json = JSON.parse(new TextDecoder().decode(content));
+
+      techs.add('Node.js');
+      if (json.dependencies) {
+        Object.assign(dependencies, json.dependencies);
+        if (json.dependencies.react) { techs.add('React'); }
+        if (json.dependencies.vue) { techs.add('Vue'); }
+        if (json.dependencies.typescript) { techs.add('TypeScript'); }
+        if (json.dependencies.express) { techs.add('Express'); }
+      }
+      if (json.devDependencies) {
+        if (json.devDependencies.typescript) { techs.add('TypeScript'); }
+      }
+    } catch (e) {
+      // Ignore if not found
+    }
+
+    // Check other files for hints
+    const files = await vscode.workspace.findFiles('{tsconfig.json,Cargo.toml,go.mod,pom.xml,requirements.txt}', '**/node_modules/**', 1);
+    files.forEach(f => {
+      if (f.fsPath.endsWith('tsconfig.json')) { techs.add('TypeScript'); }
+      if (f.fsPath.endsWith('Cargo.toml')) { techs.add('Rust'); }
+      if (f.fsPath.endsWith('go.mod')) { techs.add('Go'); }
+      if (f.fsPath.endsWith('pom.xml')) { techs.add('Java'); }
+      if (f.fsPath.endsWith('requirements.txt')) { techs.add('Python'); }
+    });
+
+    return {
+      technologies: Array.from(techs),
+      dependencies
+    };
   }
 }

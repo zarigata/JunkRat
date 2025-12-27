@@ -1,0 +1,98 @@
+
+> junkrat@0.1.0 lint
+> eslint src --ext ts
+
+
+G:\PROJETOS\JunkRat\src\extension.ts
+  110:67  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  134:71  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  149:19  warning  'progress' is defined but never used      @typescript-eslint/no-unused-vars
+
+G:\PROJETOS\JunkRat\src\providers\ChatViewProvider.ts
+    16:3   warning  'WorkspaceAnalyzedMessage' is defined but never used         @typescript-eslint/no-unused-vars
+    23:26  warning  'OllamaModelInfo' is defined but never used                  @typescript-eslint/no-unused-vars
+    58:5   warning  'context' is defined but never used                          @typescript-eslint/no-unused-vars
+    59:5   warning  '_token' is defined but never used                           @typescript-eslint/no-unused-vars
+   405:9   error    Unexpected lexical declaration in case block                 no-case-declarations
+   592:9   error    Unexpected lexical declaration in case block                 no-case-declarations
+   625:40  warning  Unexpected any. Specify a different type                     @typescript-eslint/no-explicit-any
+  1162:9   error    'suggestedActions' is never reassigned. Use 'const' instead  prefer-const
+
+G:\PROJETOS\JunkRat\src\providers\CustomProvider.ts
+  199:15  warning  'accumulatedContent' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  315:15  warning  Unexpected any. Specify a different type                 @typescript-eslint/no-explicit-any
+
+G:\PROJETOS\JunkRat\src\providers\GeminiProvider.ts
+  207:15  warning  'accumulatedContent' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  331:15  warning  Unexpected any. Specify a different type                 @typescript-eslint/no-explicit-any
+
+G:\PROJETOS\JunkRat\src\providers\OllamaProvider.ts
+    6:11  warning  'OllamaChatRequest' is defined but never used            @typescript-eslint/no-unused-vars
+  225:17  warning  'accumulatedContent' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  406:15  warning  Unexpected any. Specify a different type                 @typescript-eslint/no-explicit-any
+
+G:\PROJETOS\JunkRat\src\providers\OpenRouterProvider.ts
+  207:15  warning  'accumulatedContent' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  338:15  warning  Unexpected any. Specify a different type                 @typescript-eslint/no-explicit-any
+
+G:\PROJETOS\JunkRat\src\providers\SettingsHelperProvider.ts
+   91:40  warning  Unexpected any. Specify a different type         @typescript-eslint/no-explicit-any
+  143:35  warning  Unexpected any. Specify a different type         @typescript-eslint/no-explicit-any
+  206:58  warning  Unexpected any. Specify a different type         @typescript-eslint/no-explicit-any
+  304:33  warning  Unexpected any. Specify a different type         @typescript-eslint/no-explicit-any
+  311:10  warning  'getProviderDefaults' is defined but never used  @typescript-eslint/no-unused-vars
+
+G:\PROJETOS\JunkRat\src\services\ChatService.ts
+    4:10  warning  'AIError' is defined but never used  @typescript-eslint/no-unused-vars
+   72:12  error    Unexpected constant condition        no-constant-condition
+  172:12  error    Unexpected constant condition        no-constant-condition
+
+G:\PROJETOS\JunkRat\src\services\ContextManager.ts
+  368:59  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  380:38  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  381:35  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  382:37  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+G:\PROJETOS\JunkRat\src\services\ConversationManager.ts
+  423:11  warning  'workspaceContext' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+G:\PROJETOS\JunkRat\src\services\PhaseGenerator.ts
+  478:60  warning  'existingPlan' is defined but never used  @typescript-eslint/no-unused-vars
+
+G:\PROJETOS\JunkRat\src\services\PhaseManager.ts
+  279:19   warning  'commitSeparator' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  285:30   error    Require statement not part of import statement        @typescript-eslint/no-var-requires
+  288:83   warning  Unexpected any. Specify a different type              @typescript-eslint/no-explicit-any
+  288:104  warning  'stderr' is defined but never used                    @typescript-eslint/no-unused-vars
+  296:27   warning  'rawCommits' is assigned a value but never used       @typescript-eslint/no-unused-vars
+  492:30   error    Require statement not part of import statement        @typescript-eslint/no-var-requires
+  501:25   warning  Unexpected any. Specify a different type              @typescript-eslint/no-explicit-any
+  536:19   warning  Unexpected any. Specify a different type              @typescript-eslint/no-explicit-any
+  604:55   error    Unnecessary escape character: \`                      no-useless-escape
+  604:57   error    Unnecessary escape character: \`                      no-useless-escape
+  604:59   error    Unnecessary escape character: \`                      no-useless-escape
+  604:78   error    Unnecessary escape character: \`                      no-useless-escape
+  604:80   error    Unnecessary escape character: \`                      no-useless-escape
+  604:82   error    Unnecessary escape character: \`                      no-useless-escape
+
+G:\PROJETOS\JunkRat\src\services\PhasePlanFormatter.ts
+  168:42  warning  'phaseTitle' is defined but never used  @typescript-eslint/no-unused-vars
+  182:45  warning  'i' is defined but never used           @typescript-eslint/no-unused-vars
+  220:45  warning  'phaseTitle' is defined but never used  @typescript-eslint/no-unused-vars
+
+G:\PROJETOS\JunkRat\src\services\TelemetryService.ts
+  34:22  warning  'eventName' is defined but never used     @typescript-eslint/no-unused-vars
+  34:41  warning  'properties' is defined but never used    @typescript-eslint/no-unused-vars
+  34:80  warning  'measurements' is defined but never used  @typescript-eslint/no-unused-vars
+  47:22  warning  'error' is defined but never used         @typescript-eslint/no-unused-vars
+  47:36  warning  'properties' is defined but never used    @typescript-eslint/no-unused-vars
+
+G:\PROJETOS\JunkRat\src\types\errors.ts
+  114:34  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+G:\PROJETOS\JunkRat\src\utils\retry.ts
+  8:15  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+Γ£û 58 problems (13 errors, 45 warnings)
+  1 error and 0 warnings potentially fixable with the `--fix` option.
+

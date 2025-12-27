@@ -5,10 +5,33 @@ export function getChatScript(): string {
   return `
     (function() {
       const vscode = acquireVsCodeApi();
+
+      // Safe postMessage wrapper
+      function safePostMessage(message) {
+        try {
+          vscode.postMessage(message);
+        } catch (error) {
+          console.error('postMessage failed:', error, 'Message:', message);
+          if (message.type !== 'webviewError') {
+            try {
+              safePostMessage({
+                type: 'webviewError',
+                payload: {
+                  message: 'Failed to send message: ' + (message.type || 'unknown'),
+                  error: error.message
+                }
+              });
+            } catch (e) {
+              console.error('Failed to report postMessage error:', e);
+            }
+          }
+        }
+      }
       
       // State management
       let messages = [];
-      let providers = [];
+      let workspaceContext = null; // New state
+
       let models = [];
       let activeProviderId = 'ollama';
       let activeModel = 'llama3';
@@ -16,6 +39,7 @@ export function getChatScript(): string {
       let conversationMetadata = null;
       let currentPhasePlan = null;
       let currentPhaseMarkdown = '';
+      let messageQueue = [];
       
       // Restore previous state
       const previousState = vscode.getState();
@@ -50,6 +74,7 @@ export function getChatScript(): string {
       const onboardingWizard = document.getElementById('onboarding-wizard');
       const emptyState = document.getElementById('empty-state');
       const newChatBtn = document.getElementById('new-chat-btn');
+      const analyzeWorkspaceBtn = document.getElementById('analyze-workspace-btn');
       const historyBtn = document.getElementById('history-btn');
       const clearChatBtn = document.getElementById('clear-chat-btn');
       const providerSelect = document.getElementById('provider-select');
@@ -60,7 +85,18 @@ export function getChatScript(): string {
       const modelSelect = document.getElementById('model-select');
       const modelStatus = document.getElementById('model-status');
 
-      let phaseGenerationIndicator = null;
+      const phaseGenerationIndicator = null;
+
+      // Initialize header buttons
+      if (analyzeWorkspaceBtn) {
+        analyzeWorkspaceBtn.onclick = () => {
+          try {
+            safePostMessage({ type: 'analyzeWorkspace' });
+          } catch (error) {
+            console.error('Analyze Workspace button failed:', error);
+          }
+        };
+      }
 
       function setState() {
         vscode.setState({
@@ -71,7 +107,73 @@ export function getChatScript(): string {
           conversationMetadata,
           currentPhasePlan,
           currentPhaseMarkdown,
+          workspaceContext // Persist workspace context
         });
+      }
+
+      /**
+       * Renders the workspace context card
+       */
+      function renderWorkspaceContextCard(context, summary) {
+         workspaceContext = context; // Update local state
+         
+         const contextDiv = document.createElement('div');
+         contextDiv.className = 'workspace-context-card';
+         
+         // Header
+         const header = document.createElement('div');
+         header.className = 'workspace-context-header';
+         header.innerHTML = '<span class="codicon codicon-briefcase"></span><strong>Workspace Analyzed</strong>';
+         contextDiv.appendChild(header);
+         
+         // Summary
+         const summaryDiv = document.createElement('div');
+         summaryDiv.className = 'workspace-context-summary';
+         summaryDiv.textContent = summary;
+         contextDiv.appendChild(summaryDiv);
+         
+         // Details Grid
+         const grid = document.createElement('div');
+         grid.className = 'workspace-context-grid';
+         
+         // Files
+         const filesItem = document.createElement('div');
+         filesItem.className = 'context-grid-item';
+         filesItem.innerHTML = '<span class="label">Files</span><span class="value">' + context.fileCount + '</span>';
+         grid.appendChild(filesItem);
+         
+         // Technologies
+         if (context.technologies && context.technologies.length > 0) {
+             const techItem = document.createElement('div');
+             techItem.className = 'context-grid-item';
+             techItem.innerHTML = '<span class="label">Tech Stack</span><span class="value">' + context.technologies.slice(0, 3).join(', ') + (context.technologies.length > 3 ? '...' : '') + '</span>';
+             grid.appendChild(techItem);
+         }
+         
+         // Git
+         if (context.gitBranch) {
+             const gitItem = document.createElement('div');
+             gitItem.className = 'context-grid-item';
+             gitItem.innerHTML = '<span class="label">Git Branch</span><span class="value"><span class="codicon codicon-git-branch"></span> ' + context.gitBranch + '</span>';
+             grid.appendChild(gitItem);
+         }
+         
+         contextDiv.appendChild(grid);
+         
+         messagesContainer.appendChild(contextDiv);
+         messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+         // Add to messages for history
+         messages.push({
+             id: Date.now().toString(),
+             role: 'assistant',
+             text: summary,
+             isWorkspaceContext: true,
+             payload: { context, summary },
+             timestamp: Date.now()
+         });
+         
+         setState();
       }
       
       /**
@@ -129,6 +231,11 @@ export function getChatScript(): string {
       }
 
       function renderMessage(message) {
+        if (message.isWorkspaceContext) {
+            renderWorkspaceContextCard(message.payload.context, message.payload.summary);
+            return;
+        }
+
         // ... existing renderMessage logic ...
         if (message.isError && message.payload) {
              // If re-rendering history and it was an error
@@ -186,6 +293,7 @@ export function getChatScript(): string {
         ANALYZING_REQUIREMENTS: 'Cooking up the plan',
         GENERATING_PHASES: 'Generating epic phases',
         COMPLETE: 'Ready for lift-off 🚀',
+        ANALYZING_WORKSPACE: 'Scanning the perimeter',
         ERROR: 'Vibe check failed',
       };
 
@@ -199,7 +307,7 @@ export function getChatScript(): string {
       };
 
       function getStateBadgeClass(state) {
-        return 'conversation-state-badge conversation-state-' + state.toLowerCase();
+        return 'conversation-state-badge conversation-state-' + (state ? state.toLowerCase().replace('_', '-') : 'idle');
       }
 
       function renderWorkflowButtons(state) {
@@ -217,7 +325,7 @@ export function getChatScript(): string {
                 icon: 'rocket',
                 className: 'primary',
                 onClick: () => {
-                    vscode.postMessage({ type: 'triggerPhaseGeneration' });
+                    safePostMessage({ type: 'triggerPhaseGeneration' });
                 }
             });
         } else if (state === 'COMPLETE') {
@@ -227,7 +335,7 @@ export function getChatScript(): string {
                 className: 'secondary',
                 onClick: () => {
                      showConfirmDialog('Regenerate Plan', 'This will overwrite the current plan. Continue?', 'Regenerate', () => {
-                        vscode.postMessage({ type: 'regeneratePhasePlan', payload: { conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined } });
+                        safePostMessage({ type: 'regeneratePhasePlan', payload: { conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined } });
                      });
                 }
             });
@@ -236,7 +344,7 @@ export function getChatScript(): string {
                 icon: 'check-all',
                 className: 'primary',
                 onClick: () => {
-                    vscode.postMessage({ type: 'verifyAllPhases' });
+                    safePostMessage({ type: 'verifyAllPhases' });
                 }
             });
         }
@@ -320,6 +428,18 @@ export function getChatScript(): string {
         actionsDiv.appendChild(exportJsonButton);
         actionsDiv.appendChild(regenerateButton);
 
+        const scanGitButton = document.createElement('button');
+        scanGitButton.className = 'phase-plan-action-button';
+        scanGitButton.innerHTML = '<span class="codicon codicon-git-commit"></span><span>Scan Git</span>';
+        scanGitButton.onclick = () => handleScanGitProgress(false);
+        actionsDiv.appendChild(scanGitButton);
+
+        const runAnalyzeButton = document.createElement('button');
+        runAnalyzeButton.className = 'phase-plan-action-button';
+        runAnalyzeButton.innerHTML = '<span class="codicon codicon-beaker"></span><span>Run & Analyze</span>';
+        runAnalyzeButton.onclick = () => handleRunAndAnalyze();
+        actionsDiv.appendChild(runAnalyzeButton);
+
         const contentDiv = document.createElement('div');
         contentDiv.className = 'phase-plan-content';
         
@@ -394,7 +514,7 @@ export function getChatScript(): string {
               deleteBtn.onclick = (e) => {
                 e.stopPropagation();
                 showConfirmDialog('Delete Phase', 'Are you sure you want to delete this phase?', 'Delete', () => {
-                   vscode.postMessage({
+                   safePostMessage({
                       type: 'deletePhase',
                       payload: {
                         conversationId: plan.conversationId,
@@ -652,7 +772,7 @@ export function getChatScript(): string {
         confirmBtn.onclick = () => {
           const prompt = input.value.trim();
           if (prompt) {
-            vscode.postMessage({
+            safePostMessage({
               type: 'addPhase',
               payload: {
                 conversationId: currentPhasePlan.conversationId,
@@ -732,7 +852,7 @@ export function getChatScript(): string {
           const newDesc = descInput.value.trim();
           
           if (newTitle && newDesc) {
-            vscode.postMessage({
+            safePostMessage({
               type: 'editPhase',
               payload: {
                 conversationId: currentPhasePlan.conversationId,
@@ -792,6 +912,28 @@ export function getChatScript(): string {
         return output;
       }
 
+      function handleScanGitProgress(dryRun) {
+         showConfirmDialog(
+             'Scan Git History',
+             'This will scan your git history to update phase status. Continue?',
+             'Scan',
+             () => {
+                 safePostMessage({ type: 'scanGitProgress', payload: { dryRun: dryRun } });
+             }
+         );
+      }
+
+      function handleRunAndAnalyze() {
+         showConfirmDialog(
+             'Run & Analyze',
+             'This will execute the configured test command and analyze the output with AI. Continue?',
+             'Run',
+             () => {
+                 safePostMessage({ type: 'runAndAnalyze', payload: {} });
+             }
+         );
+      }
+
       function updateConversationState(state, metadata) {
         if (!state) {
           return;
@@ -816,7 +958,7 @@ export function getChatScript(): string {
         
         // Request progress update if phases exist
         if (metadata && metadata.phaseCount > 0) {
-            vscode.postMessage({ type: 'requestPhaseProgress' });
+            safePostMessage({ type: 'requestPhaseProgress' });
         }
 
         if (state === 'GENERATING_PHASES') {
@@ -917,6 +1059,41 @@ export function getChatScript(): string {
       }
       
       /**
+       * socket for sending messages to backend, with queue support
+       */
+      function attemptSend(text) {
+         const activeProvider = providers.find(p => p.id === activeProviderId);
+         
+         // If providers exist but active one is unavailable, queue the message
+         if (providers.length > 0 && (!activeProvider || !activeProvider.available)) {
+             if (!messageQueue) messageQueue = [];
+             messageQueue.push(text);
+             console.log('Message queued due to unavailable provider');
+             return;
+         }
+         
+         // Otherwise (available OR no providers configured), send immediately
+         // Sending when no providers configured triggers the helpful fallback in ConversationManager
+         safePostMessage({
+           type: 'sendMessage',
+           payload: { text: text }
+         });
+      }
+
+      function processMessageQueue() {
+          if (!messageQueue || messageQueue.length === 0) return;
+          
+          const activeProvider = providers.find(p => p.id === activeProviderId);
+          if (activeProvider && activeProvider.available) {
+              // Send all queued messages
+              while (messageQueue.length > 0) {
+                  const text = messageQueue.shift();
+                  attemptSend(text);
+              }
+          }
+      }
+
+      /**
        * Sends a message to the extension
        */
       function sendMessage() {
@@ -939,11 +1116,8 @@ export function getChatScript(): string {
         // Render immediately for instant feedback
         renderMessage(userMessage);
         
-        // Send to extension
-        vscode.postMessage({
-          type: 'sendMessage',
-          payload: { text: text }
-        });
+        // Attempt to send (will queue if needed)
+        attemptSend(text);
         
         // Clear input and refocus
         messageInput.value = '';
@@ -958,7 +1132,15 @@ export function getChatScript(): string {
        */
       function clearMessages() {
         messages = [];
-        messagesContainer.innerHTML = '';
+        
+        // Preserve onboarding wizard and empty state elements
+        const children = Array.from(messagesContainer.children);
+        children.forEach(child => {
+          if (child.id !== 'onboarding-wizard' && child.id !== 'empty-state') {
+            child.remove();
+          }
+        });
+
         removeExistingPhasePlan();
         if (emptyState) {
           emptyState.style.display = 'flex';
@@ -981,6 +1163,11 @@ export function getChatScript(): string {
           <span class="codicon \${iconClass}"></span>
           <span>\${available ? 'Available' : 'Unavailable'} · \${providerName}</span>
         \`;
+
+        if (available) {
+          hideOnboardingWizard();
+          processMessageQueue();
+        }
       }
 
       function updateProviderList(providerList, activeId) {
@@ -1004,6 +1191,11 @@ export function getChatScript(): string {
         const activeProvider = providers.find((provider) => provider.id === activeProviderId);
         const isAvailable = activeProvider ? activeProvider.available : false;
         updateProviderStatus(activeProviderId, !!isAvailable);
+        
+        if (isAvailable) {
+          hideOnboardingWizard();
+          processMessageQueue();
+        }
         setState();
       }
 
@@ -1097,7 +1289,7 @@ export function getChatScript(): string {
             break;
 
           case 'noProvidersReady':
-            showOnboardingWizard();
+            showOnboardingWizard(message.payload.message, message.payload.allowSkip);
             break;
             
           case 'clearChat':
@@ -1106,6 +1298,12 @@ export function getChatScript(): string {
 
           case 'providerList':
             updateProviderList(message.payload.providers, message.payload.activeProviderId);
+            break;
+
+          case 'providerStatusUpdate':
+            if (message.payload && typeof message.payload.available !== 'undefined') {
+              updateProviderStatus(message.payload.providerId || activeProviderId, message.payload.available);
+            }
             break;
 
           case 'providerChanged': {
@@ -1123,6 +1321,12 @@ export function getChatScript(): string {
             );
             const updatedProvider = providers.find((p) => p.id === activeProviderId);
             updateProviderStatus(activeProviderId, updatedProvider ? updatedProvider.available : true);
+            
+            // Check queue if provider became available
+            if (updatedProvider && updatedProvider.available) {
+                processMessageQueue();
+            }
+            
             setState();
             break;
           }
@@ -1145,9 +1349,14 @@ export function getChatScript(): string {
             const activeResult = updates[activeProviderId];
             if (activeResult) {
               updateProviderStatus(activeProviderId, activeResult.valid);
+              if (activeResult.valid) {
+                  processMessageQueue();
+              }
             }
             setState();
             break;
+
+
 
           case 'phasePlan':
             if (!message.payload) {
@@ -1185,7 +1394,7 @@ export function getChatScript(): string {
 
           case 'conversationDeleted':
             // Request updated list
-            vscode.postMessage({ type: 'requestConversationList', payload: {} });
+            safePostMessage({ type: 'requestConversationList', payload: {} });
             break;
             
           case 'phaseStatusUpdated':
@@ -1204,9 +1413,92 @@ export function getChatScript(): string {
             }
             break;
 
-          case 'nextActionSuggestions':
             if (typeof renderNextActionSuggestions === 'function') {
                 renderNextActionSuggestions(message.payload.suggestions);
+            }
+            break;
+
+          case 'workspaceAnalyzed':
+            renderWorkspaceAnalysis(message.context);
+            break;
+
+
+          case 'runAnalysisComplete':
+            const runResult = message.payload;
+            const runDiv = document.createElement('div');
+            runDiv.className = 'message system run-analysis-result';
+            
+            let runHtml = '<div class="analysis-header ' + (runResult.success ? 'success' : 'failure') + '">';
+            runHtml += '<span class="codicon ' + (runResult.success ? 'codicon-pass' : 'codicon-error') + '"></span>';
+            runHtml += '<strong>Command Executed:</strong> <code>' + runResult.command + '</code>';
+            runHtml += '<span class="duration">(' + runResult.duration + 'ms)</span>';
+            runHtml += '</div>';
+            
+            if (runResult.analysis) {
+                 runHtml += '<div class="analysis-summary">';
+                 runHtml += '<strong>AI Analysis:</strong><p>' + runResult.analysis.summary + '</p>';
+                 runHtml += '</div>';
+                 
+                 if (runResult.analysis.affectedPhases && runResult.analysis.affectedPhases.length > 0) {
+                     runHtml += '<div class="affected-phases">';
+                     runHtml += '<strong>Affected Phases:</strong><ul>';
+                     runResult.analysis.affectedPhases.forEach(p => {
+                         const statusIcon = p.status === 'passed' ? '✅' : p.status === 'failed' ? '❌' : '⚠️';
+                         runHtml += '<li>' + statusIcon + ' Phase ' + p.phaseId + ': ' + p.reason + '</li>';
+                     });
+                     runHtml += '</ul></div>';
+                 }
+                 
+                 if (runResult.analysis.suggestions && runResult.analysis.suggestions.length > 0) {
+                     runHtml += '<div class="analysis-suggestions">';
+                     runHtml += '<strong>Suggestions:</strong><ul>';
+                     runResult.analysis.suggestions.forEach(s => {
+                         runHtml += '<li>' + s + '</li>';
+                     });
+                     runHtml += '</ul></div>';
+                 }
+            }
+            
+            runHtml += '<details class="output-details"><summary>Show Output</summary>';
+            if (runResult.stdout) {
+                runHtml += '<div class="output-block stdout"><strong>Stdout:</strong><pre>' + runResult.stdout.replace(/</g, '&lt;') + '</pre></div>';
+            }
+            if (runResult.stderr) {
+                runHtml += '<div class="output-block stderr"><strong>Stderr:</strong><pre>' + runResult.stderr.replace(/</g, '&lt;') + '</pre></div>';
+            }
+            runHtml += '</details>';
+            
+            runDiv.innerHTML = runHtml;
+            messagesContainer.appendChild(runDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            break;
+
+          case 'gitScanComplete':
+            const { updated, results } = message.payload;
+            // Show notification
+            const notification = document.createElement('div');
+            notification.className = 'message system git-scan-result';
+            
+            let resultHtml = '<strong>Git Scan Complete 🔍</strong><br/>';
+            resultHtml += 'Updated ' + updated + ' phase(s) based on ' + results.length + ' matched commit(s).<br/>';
+            
+            if (results.length > 0) {
+                 resultHtml += '<ul style="margin: 8px 0; padding-left: 20px;">';
+                 results.forEach(r => {
+                     resultHtml += '<li>Phase: ' + r.phaseId + ' (' + r.matchedCommits.length + ' commits, confidence: ' + Math.round(r.confidence * 100) + '%)</li>';
+                 });
+                 resultHtml += '</ul>';
+            }
+            
+            notification.innerHTML = resultHtml;
+            messagesContainer.appendChild(notification);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            // Re-enable button
+            const scanBtn = document.querySelector('.scan-git-btn');
+            if (scanBtn) {
+              scanBtn.disabled = false;
+              scanBtn.innerHTML = '<span class="codicon codicon-git-commit"></span> Scan Git Progress';
             }
             break;
         }
@@ -1223,7 +1515,7 @@ export function getChatScript(): string {
           modal.style.display = 'flex';
         }
         // Request conversation list
-        vscode.postMessage({ type: 'requestConversationList', payload: {} });
+        safePostMessage({ type: 'requestConversationList', payload: {} });
       }
 
       function hideHistoryModal() {
@@ -1248,7 +1540,15 @@ export function getChatScript(): string {
           emptyDiv.className = 'history-empty';
           emptyDiv.innerHTML = '\u003cspan class="codicon codicon-inbox"\u003e\u003c/span\u003e\u003cp\u003eNo conversations yet\u003c/p\u003e';
           listContainer.appendChild(emptyDiv);
+          
+          if (historyBtn) {
+            historyBtn.removeAttribute('data-count');
+          }
           return;
+        }
+        
+        if (historyBtn) {
+            historyBtn.setAttribute('data-count', conversationListData.length.toString());
         }
 
         conversationListData.forEach((conv) => {
@@ -1280,8 +1580,12 @@ export function getChatScript(): string {
           loadBtn.title = 'Load';
           loadBtn.innerHTML = '\u003cspan class="codicon codicon-folder-opened"\u003e\u003c/span\u003e';
           loadBtn.onclick = (e) => {
-            e.stopPropagation();
-            vscode.postMessage({ type: 'loadConversation', payload: { conversationId: conv.id } });
+            try {
+              e.stopPropagation();
+              safePostMessage({ type: 'loadConversation', payload: { conversationId: conv.id } });
+            } catch (error) {
+              console.error('Load button failed:', error);
+            }
           };
 
           const renameBtn = document.createElement('button');
@@ -1289,10 +1593,14 @@ export function getChatScript(): string {
           renameBtn.title = 'Rename';
           renameBtn.innerHTML = '\u003cspan class="codicon codicon-edit"\u003e\u003c/span\u003e';
           renameBtn.onclick = (e) => {
-            e.stopPropagation();
-            const newTitle = prompt('Enter new title:', conv.title);
-            if (newTitle && newTitle.trim()) {
-              vscode.postMessage({ type: 'renameConversation', payload: { conversationId: conv.id, newTitle: newTitle.trim() } });
+            try {
+              e.stopPropagation();
+              const newTitle = prompt('Enter new title:', conv.title);
+              if (newTitle && newTitle.trim()) {
+                safePostMessage({ type: 'renameConversation', payload: { conversationId: conv.id, newTitle: newTitle.trim() } });
+              }
+            } catch (error) {
+              console.error('Rename button failed:', error);
             }
           };
 
@@ -1301,9 +1609,13 @@ export function getChatScript(): string {
           exportBtn.title = 'Export';
           exportBtn.innerHTML = '\u003cspan class="codicon codicon-export"\u003e\u003c/span\u003e';
           exportBtn.onclick = (e) => {
-            e.stopPropagation();
-            const format = confirm('Export as JSON? (Cancel for Markdown)') ? 'json' : 'markdown';
-            vscode.postMessage({ type: 'exportConversationToFile', payload: { conversationId: conv.id, format } });
+            try {
+              e.stopPropagation();
+              const format = confirm('Export as JSON? (Cancel for Markdown)') ? 'json' : 'markdown';
+              safePostMessage({ type: 'exportConversationToFile', payload: { conversationId: conv.id, format } });
+            } catch (error) {
+              console.error('Export button failed:', error);
+            }
           };
 
           const deleteBtn = document.createElement('button');
@@ -1311,10 +1623,14 @@ export function getChatScript(): string {
           deleteBtn.title = 'Delete';
           deleteBtn.innerHTML = '\u003cspan class="codicon codicon-trash"\u003e\u003c/span\u003e';
           deleteBtn.onclick = (e) => {
-            e.stopPropagation();
-            showConfirmDialog('Delete Conversation', 'Are you sure you want to delete this conversation?', 'Delete', () => {
-                vscode.postMessage({ type: 'deleteConversation', payload: { conversationId: conv.id } });
-            });
+            try {
+              e.stopPropagation();
+              showConfirmDialog('Delete Conversation', 'Are you sure you want to delete this conversation?', 'Delete', () => {
+                  safePostMessage({ type: 'deleteConversation', payload: { conversationId: conv.id } });
+              });
+            } catch (error) {
+              console.error('Delete button failed:', error);
+            }
           };
 
           actions.appendChild(loadBtn);
@@ -1347,192 +1663,216 @@ export function getChatScript(): string {
         });
       }
 
-      if (historyBtn) {
-        historyBtn.addEventListener('click', () => {
-          showHistoryModal();
-        });
-      }
+
 
       messagesContainer.addEventListener('click', (event) => {
-        const target = event.target.closest('button.phase-plan-action-button');
-        if (!target) {
-          return;
-        }
+        try {
+          const target = event.target.closest('button.phase-plan-action-button');
+          if (!target) {
+            return;
+          }
 
-        const action = target.dataset.action;
-        const phasePlanContainer = target.closest('.phase-plan-message');
-        
-        // Don't handle if inside a dropdown (which also uses phase-plan-action-button class sometimes? no, different classes)
-
-        if (action === 'copy-markdown') {
-          copyToClipboard(currentPhaseMarkdown, 'Markdown', phasePlanContainer);
-        } else if (action === 'export-markdown') {
-          vscode.postMessage({
-            type: 'exportPhasePlanToFile',
-            payload: {
-              conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
-              format: 'markdown'
-            },
-          });
-        } else if (action === 'export-json') {
-          vscode.postMessage({
-             type: 'exportPhasePlanToFile',
-             payload: {
-               conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
-               format: 'json'
-             },
-           });
-        } else if (action === 'copy-json') {
-          const json = currentPhasePlan ? JSON.stringify(currentPhasePlan, null, 2) : '';
-          copyToClipboard(json, 'JSON', phasePlanContainer);
-        } else if (action === 'regenerate') {
-          vscode.postMessage({
-            type: 'regeneratePhasePlan',
-            payload: {
-              conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
-            },
-          });
-          showPhaseGenerationIndicator();
+          const action = target.dataset.action;
+          const phasePlanContainer = target.closest('.phase-plan-message');
+          
+          if (action === 'copy-markdown') {
+            copyToClipboard(currentPhaseMarkdown, 'Markdown', phasePlanContainer);
+          } else if (action === 'export-markdown') {
+            safePostMessage({
+              type: 'exportPhasePlanToFile',
+              payload: {
+                conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
+                format: 'markdown'
+              },
+            });
+          } else if (action === 'export-json') {
+            safePostMessage({
+               type: 'exportPhasePlanToFile',
+               payload: {
+                 conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
+                 format: 'json'
+               },
+             });
+          } else if (action === 'copy-json') {
+            const json = currentPhasePlan ? JSON.stringify(currentPhasePlan, null, 2) : '';
+            copyToClipboard(json, 'JSON', phasePlanContainer);
+          } else if (action === 'regenerate') {
+            safePostMessage({
+              type: 'regeneratePhasePlan',
+              payload: {
+                conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
+              },
+            });
+            showPhaseGenerationIndicator();
+          }
+        } catch (error) {
+          console.error('Phase plan action handler failed:', error);
         }
       });
 
       // Phase and Task action handlers
+      // Phase and Task action handlers
       messagesContainer.addEventListener('click', (e) => {
-        // Verify Phase Button
-        const verifyBtn = e.target.closest('.verify-phase-btn');
-        if (verifyBtn) {
-          const phaseId = verifyBtn.dataset.phaseId;
-          if (phaseId && !verifyBtn.classList.contains('loading')) {
-            verifyBtn.classList.add('loading');
-            vscode.postMessage({
-              type: 'verifyPhase',
-              payload: {
-                phaseId,
-                conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined
-              }
-            });
+        try {
+          // Verify Phase Button
+          const verifyBtn = e.target.closest('.verify-phase-btn');
+          if (verifyBtn) {
+            const phaseId = verifyBtn.dataset.phaseId;
+            if (phaseId && !verifyBtn.classList.contains('loading')) {
+              verifyBtn.classList.add('loading');
+              safePostMessage({
+                type: 'verifyPhase',
+                payload: {
+                  phaseId,
+                  conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined
+                }
+              });
+            }
+            return;
           }
-          return;
-        }
 
-        // Task Status Badge (Toggle status)
-        const taskBadge = e.target.closest('.task-status-badge');
-        if (taskBadge) {
-          const taskId = taskBadge.dataset.taskId;
-          const phaseId = taskBadge.dataset.phaseId;
-          const currentStatus = taskBadge.classList.contains('status-completed') ? 'completed' : 
-                               taskBadge.classList.contains('status-in-progress') ? 'in-progress' : 'pending';
-          
-          let newStatus = 'pending';
-          if (currentStatus === 'pending') newStatus = 'in-progress';
-          else if (currentStatus === 'in-progress') newStatus = 'completed';
-          else if (currentStatus === 'completed') newStatus = 'pending'; // Cycle back to pending
+          // Task Status Badge (Toggle status)
+          const taskBadge = e.target.closest('.task-status-badge');
+          if (taskBadge) {
+            // ... (existing logic)
 
-          if (taskId && phaseId) {
-            vscode.postMessage({
-              type: 'updateTaskStatus',
-              payload: {
-                taskId,
-                phaseId,
-                status: newStatus,
-                conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined
-              }
-            });
+            const taskId = taskBadge.dataset.taskId;
+            const phaseId = taskBadge.dataset.phaseId;
+            const currentStatus = taskBadge.classList.contains('status-completed') ? 'completed' : 
+                                 taskBadge.classList.contains('status-in-progress') ? 'in-progress' : 'pending';
+            
+            let newStatus = 'pending';
+            if (currentStatus === 'pending') newStatus = 'in-progress';
+            else if (currentStatus === 'in-progress') newStatus = 'completed';
+            else if (currentStatus === 'completed') newStatus = 'pending'; // Cycle back to pending
+
+            if (taskId && phaseId) {
+              safePostMessage({
+                type: 'updateTaskStatus',
+                payload: {
+                  taskId,
+                  phaseId,
+                  status: newStatus,
+                  conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined
+                }
+              });
+            }
+            return;
           }
-          return;
+        } catch (error) {
+          console.error('Task interaction handler failed:', error);
         }
       });
 
       // Task execute button handlers
+      // Task execute button handlers
       messagesContainer.addEventListener('click', (e) => {
-        const target = e.target.closest('.execute-btn');
-        if (target) {
-          // Toggle dropdown menu
-          const dropdown = target.closest('.execute-dropdown');
-          if (dropdown) {
-            dropdown.classList.toggle('open');
-            e.stopPropagation();
+        try {
+          const target = e.target.closest('.execute-btn');
+          if (target) {
+            // Toggle dropdown menu
+            const dropdown = target.closest('.execute-dropdown');
+            if (dropdown) {
+              dropdown.classList.toggle('open');
+              e.stopPropagation();
+            }
+            return;
           }
-          return;
-        }
 
-        const option = e.target.closest('.execute-option');
-        if (!option) {
-          return;
-        }
+          const option = e.target.closest('.execute-option');
+          if (!option) {
+            return;
+          }
 
-        const action = option.dataset.action;
-        const taskItem = option.closest('.task-item');
-        if (!taskItem || !taskItem.dataset.taskData) {
-          return;
-        }
+          const action = option.dataset.action;
+          const taskItem = option.closest('.task-item');
+          if (!taskItem || !taskItem.dataset.taskData) {
+            return;
+          }
 
-        const task = JSON.parse(taskItem.dataset.taskData);
-        const phaseTitle = taskItem.dataset.phaseTitle;
+          const task = JSON.parse(taskItem.dataset.taskData);
+          const phaseTitle = taskItem.dataset.phaseTitle;
 
-        if (action === 'copy') {
-          const formattedTask = formatTaskForExecution(task, phaseTitle);
-          copyToClipboard(formattedTask.replace(/\\\\n/g, '\\n'), 'Task', taskItem);
-        } else if (['roo-code', 'windsurf', 'aider', 'cursor', 'continue'].includes(action)) {
-          vscode.postMessage({
-            type: 'handoffTaskToTool',
-            payload: { task, phaseTitle, toolName: action }
-          });
-        } else if (action === 'gemini-cli') {
-          vscode.postMessage({
-            type: 'executeTaskInGeminiCLI',
-            payload: { task, phaseTitle }
-          });
-        }
+          if (action === 'copy') {
+            const formattedTask = formatTaskForExecution(task, phaseTitle);
+            copyToClipboard(formattedTask.replace(/\\n/g, '\n'), 'Task', taskItem);
+          } else if (['roo-code', 'windsurf', 'aider', 'cursor', 'continue'].includes(action)) {
+            safePostMessage({
+              type: 'handoffTaskToTool',
+              payload: { task, phaseTitle, toolName: action }
+            });
+          } else if (action === 'gemini-cli') {
+            safePostMessage({
+              type: 'executeTaskInGeminiCLI',
+              payload: { task, phaseTitle }
+            });
+          }
 
-        const dropdown = option.closest('.execute-dropdown');
-        if (dropdown) {
-          dropdown.classList.remove('open');
+          const dropdown = option.closest('.execute-dropdown');
+          if (dropdown) {
+            dropdown.classList.remove('open');
+          }
+        } catch (error) {
+          console.error('Task execution handler failed:', error);
         }
       });
 
       // Global handoff dropdown toggle
       messagesContainer.addEventListener('click', (e) => {
-        const handoffBtn = e.target.closest('.global-handoff-btn');
-        if (handoffBtn) {
-          const dropdown = handoffBtn.closest('.global-handoff-dropdown');
-          if (dropdown) {
-            dropdown.classList.toggle('open');
-            e.stopPropagation();
-          }
-          return;
-        }
-
-        const handoffOption = e.target.closest('.handoff-option');
-        if (handoffOption) {
-          const toolName = handoffOption.dataset.tool;
-          vscode.postMessage({
-            type: 'handoffPlanToTool',
-            payload: {
-              conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
-              toolName
+        try {
+          const handoffBtn = e.target.closest('.global-handoff-btn');
+          if (handoffBtn) {
+            const dropdown = handoffBtn.closest('.global-handoff-dropdown');
+            if (dropdown) {
+              dropdown.classList.toggle('open');
+              e.stopPropagation();
             }
-          });
-          
-          const dropdown = handoffOption.closest('.global-handoff-dropdown');
-          if (dropdown) {
-            dropdown.classList.remove('open');
+            return;
           }
+
+          const handoffOption = e.target.closest('.handoff-option');
+          if (handoffOption) {
+            const toolName = handoffOption.dataset.tool;
+            safePostMessage({
+              type: 'handoffPlanToTool',
+              payload: {
+                conversationId: currentPhasePlan ? currentPhasePlan.conversationId : undefined,
+                toolName
+              }
+            });
+            
+            const dropdown = handoffOption.closest('.global-handoff-dropdown');
+            if (dropdown) {
+              dropdown.classList.remove('open');
+            }
+          }
+        } catch (error) {
+          console.error('Handoff handler failed:', error);
         }
       });
 
       // Close dropdowns when clicking elsewhere
       document.addEventListener('click', (e) => {
-        if (!e.target.closest('.execute-dropdown')) {
-          document.querySelectorAll('.execute-dropdown.open').forEach(d => d.classList.remove('open'));
-        }
-        if (!e.target.closest('.global-handoff-dropdown')) {
-          document.querySelectorAll('.global-handoff-dropdown.open').forEach(d => d.classList.remove('open'));
+        try {
+          if (!e.target.closest('.execute-dropdown')) {
+            document.querySelectorAll('.execute-dropdown.open').forEach(d => d.classList.remove('open'));
+          }
+          if (!e.target.closest('.global-handoff-dropdown')) {
+            document.querySelectorAll('.global-handoff-dropdown.open').forEach(d => d.classList.remove('open'));
+          }
+        } catch (error) {
+          console.error('Dropdown closer failed:', error);
         }
       });
 
       // Event listeners
-      sendButton.addEventListener('click', sendMessage);
+      sendButton.addEventListener('click', () => {
+        try {
+          sendMessage();
+        } catch (error) {
+          console.error('Send button failed:', error);
+        }
+      });
       
       // Error Action Buttons (delegated)
       messagesContainer.addEventListener('click', (e) => {
@@ -1544,86 +1884,128 @@ export function getChatScript(): string {
         
         switch (action) {
           case 'retry':
-            vscode.postMessage({ type: 'retryLastRequest' });
+            safePostMessage({ type: 'retryLastRequest' });
             break;
             
           case 'switchProvider':
             if (providerId) {
-               vscode.postMessage({ type: 'switchProviderAndRetry', payload: { providerId } });
+               safePostMessage({ type: 'switchProviderAndRetry', payload: { providerId } });
             }
             break;
             
           case 'refreshModels':
-             vscode.postMessage({ type: 'refreshModels', payload: { providerId } });
+             safePostMessage({ type: 'refreshModels', payload: { providerId } });
              break;
              
           case 'openSettings':
-             vscode.postMessage({ type: 'openSettings' });
+             safePostMessage({ type: 'openSettings' });
              break;
         }
       });
 
       if (providerSelect) {
         providerSelect.addEventListener('change', (event) => {
-          const selectedProviderId = event.target.value;
-          if (!selectedProviderId || selectedProviderId === activeProviderId) {
-            return;
+          try {
+            const selectedProviderId = event.target.value;
+            if (!selectedProviderId || selectedProviderId === activeProviderId) {
+              return;
+            }
+            safePostMessage({
+              type: 'selectProvider',
+              payload: { providerId: selectedProviderId }
+            });
+          } catch (error) {
+            console.error('Provider select failed:', error);
           }
-          vscode.postMessage({
-            type: 'selectProvider',
-            payload: { providerId: selectedProviderId }
-          });
         });
       }
 
       if (settingsButton) {
         settingsButton.addEventListener('click', () => {
-          vscode.postMessage({
-            type: 'openSettings',
-            payload: { settingId: 'junkrat.' + activeProviderId }
-          });
+          try {
+            safePostMessage({
+              type: 'openSettings',
+              payload: { settingId: 'junkrat.' + activeProviderId }
+            });
+          } catch (error) {
+            console.error('Settings button failed:', error);
+          }
+        });
+      }
+
+      const emptyStateConfigBtn = document.getElementById('empty-state-config-btn');
+      if (emptyStateConfigBtn) {
+        emptyStateConfigBtn.addEventListener('click', () => {
+          try {
+            safePostMessage({ 
+              type: 'openSettings', 
+              payload: { settingId: 'junkrat.activeProvider' } 
+            });
+          } catch (error) {
+            console.error('Empty state config button failed:', error);
+          }
         });
       }
 
       if (modelSelect) {
         modelSelect.addEventListener('change', (event) => {
-          const selectedModel = event.target.value;
-          if (!selectedModel || selectedModel === activeModel) {
-            return;
+          try {
+            const selectedModel = event.target.value;
+            if (!selectedModel || selectedModel === activeModel) {
+              return;
+            }
+            safePostMessage({
+              type: 'selectModel',
+              payload: { modelName: selectedModel }
+            });
+          } catch (error) {
+            console.error('Model select failed:', error);
           }
-          vscode.postMessage({
-            type: 'selectModel',
-            payload: { modelName: selectedModel }
-          });
         });
       }
 
       // Header button event listeners
       if (newChatBtn) {
         newChatBtn.addEventListener('click', () => {
-          vscode.postMessage({ type: 'newChat', payload: {} });
+          try {
+            safePostMessage({ type: 'newChat', payload: {} });
+          } catch (error) {
+            console.error('New Chat button failed:', error);
+          }
         });
       }
 
       if (historyBtn) {
         historyBtn.addEventListener('click', () => {
-          vscode.postMessage({ type: 'showHistory', payload: {} });
+          try {
+            showHistoryModal();
+          } catch (error) {
+             console.error('History button failed:', error);
+          }
         });
       }
 
       if (clearChatBtn) {
         clearChatBtn.addEventListener('click', () => {
-           showConfirmDialog('Clear Chat', 'Are you sure you want to clear all messages?', 'Clear All', () => {
-                clearMessages();
-                vscode.postMessage({ type: 'clearChat', payload: {} });
-           });
+          try {
+             showConfirmDialog('Clear Chat', 'Are you sure you want to clear all messages?', 'Clear All', () => {
+                  clearMessages();
+                  safePostMessage({ type: 'clearChat', payload: {} });
+             });
+          } catch (error) {
+            console.error('Clear chat button failed:', error);
+          }
         });
       }
       
       messageInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-          e.preventDefault();
-          sendMessage();
+        try {
+          if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            sendMessage();
+          }
+        } catch (error) {
+          console.error('Message input keypress failed:', error);
         }
       });
       
@@ -1656,11 +2038,40 @@ export function getChatScript(): string {
       // Focus input field
       messageInput.focus();
 
+      // Task Status Badge Handler - handled in click delegation above
+      
+      // Handle Scan Git Progress button (delegation)
+      messagesContainer.addEventListener('click', (e) => {
+         // This delegation is for messages container. But the button is in the dashboard which is in header?
+         // No, dashboard is in chat-header.
+      });
+
+      // We need listener for dashboard button. Dashboard is NOT in messagesContainer.
+      // It is in chat-header.
+      const dashboard = document.getElementById('phase-dashboard');
+      if (dashboard) {
+          dashboard.addEventListener('click', (e) => {
+            try {
+              const target = e.target;
+              if (target.closest('.scan-git-btn')) {
+                const btn = target.closest('.scan-git-btn');
+                btn.disabled = true;
+                btn.innerHTML = '<span class="codicon codicon-loading codicon-modifier-spin"></span> Scanning...';
+                safePostMessage({ type: 'scanGitProgress', payload: { dryRun: false } });
+                e.preventDefault();
+                return;
+              }
+            } catch (error) {
+              console.error('Dashboard click handler failed:', error);
+            }
+          });
+      }
+
       // Send ready message to extension
-      vscode.postMessage({ type: 'ready' });
-      vscode.postMessage({ type: 'requestProviderList' });
-      vscode.postMessage({ type: 'requestConfigurationStatus' });
-      vscode.postMessage({ type: 'requestModelList' });
+      safePostMessage({ type: 'ready' });
+      safePostMessage({ type: 'requestProviderList' });
+      safePostMessage({ type: 'requestConfigurationStatus' });
+      safePostMessage({ type: 'requestModelList' });
 
       if (providers.length > 0) {
         updateProviderList(providers, activeProviderId);
@@ -1668,24 +2079,59 @@ export function getChatScript(): string {
 
       // Global Keyboard Shortcuts
       document.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-             if (document.activeElement === messageInput) {
-                  sendMessage();
-             }
+        try {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+               if (document.activeElement === messageInput) {
+                    sendMessage();
+               }
+          }
+          // New Chat: Ctrl+Shift+N
+          if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'n' || e.key === 'N')) {
+               e.preventDefault();
+               safePostMessage({ type: 'newChat', payload: {} });
+          }
+          // History: Ctrl+Shift+H
+          if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'h' || e.key === 'H')) {
+              e.preventDefault();
+              showHistoryModal();
+          }
+          // Clear Chat: Ctrl+Shift+K
+          if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'k' || e.key === 'K')) {
+              e.preventDefault();
+              showConfirmDialog('Clear Chat', 'Are you sure you want to clear all messages?', 'Clear All', () => {
+                   clearMessages();
+                   safePostMessage({ type: 'clearChat', payload: {} });
+              });
+          }
+        } catch (error) {
+          console.error('Global keyboard shortcut handler failed:', error);
         }
-        if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
-             e.preventDefault();
-             vscode.postMessage({ type: 'newChat', payload: {} });
+        } catch (error) {
+          console.error('Global keyboard shortcut handler failed:', error);
         }
+      });
+
+      // Escape key to dismiss wizard
+      document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && onboardingWizard && onboardingWizard.style.display !== 'none') {
+              hideOnboardingWizard();
+              if (messageInput) {
+                  messageInput.focus();
+              }
+          }
       });
 
       // Export All Button Listener
       const exportAllBtn = document.getElementById('export-all-btn');
       if (exportAllBtn) {
           exportAllBtn.addEventListener('click', (e) => {
+            try {
                e.stopPropagation();
                const format = confirm('Export all conversations as JSON? (Cancel for Markdown)') ? 'json' : 'markdown';
-               vscode.postMessage({ type: 'exportAllConversations', payload: { format } });
+               safePostMessage({ type: 'exportAllConversations', payload: { format } });
+            } catch (error) {
+              console.error('Export all button failed:', error);
+            }
           });
       }
 
@@ -1713,6 +2159,14 @@ export function getChatScript(): string {
         const statsVerified = document.getElementById('dashboard-stats-verified');
         if (statsVerified) {
            statsVerified.textContent = verified + '/' + total + ' Verified';
+        }
+
+        const actionsDiv = dashboard.querySelector('.dashboard-actions');
+        if (actionsDiv && hasPhases) {
+          // Only add if not already there
+          if (!actionsDiv.querySelector('.scan-git-btn')) {
+                  actionsDiv.innerHTML = \`<button class="dashboard-btn scan-git-btn" title="Scan git commits to auto-update phase progress"><span class="codicon codicon-git-commit"></span> Scan Git Progress</button>\`;
+          }
         }
       }
 
@@ -1753,69 +2207,176 @@ function renderNextActionSuggestions(suggestions) {
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
+function renderWorkspaceAnalysis(payload) {
+  const analysisDiv = document.createElement('div');
+  analysisDiv.className = 'message system workspace-analysis';
+  
+  let html = '<strong>Workspace Analyzed 📊</strong><br/><br/>';
+  html += \`Files: \${payload.fileCount}<br/>\`;
+  
+  if (payload.technologies && payload.technologies.length > 0) {
+    html += \`Tech Stack: \${payload.technologies.join(', ')}<br/>\`;
+  }
+  
+  if (payload.gitBranch) {
+    html += \`Branch: \${payload.gitBranch}<br/>\`;
+  }
+  
+  analysisDiv.innerHTML = html;
+  messagesContainer.appendChild(analysisDiv);
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  
+  // Add to local state/history if needed
+  messages.push({
+    id: Date.now().toString(),
+    role: 'system',
+    text: 'Workspace analysis completed.',
+    timestamp: Date.now()
+  });
+}
+
       /* --- Onboarding Wizard Functions --- */
 
-      function showOnboardingWizard() {
+      function showOnboardingWizard(customMessage, allowSkip) {
         if (onboardingWizard) {
           onboardingWizard.style.display = 'flex';
+          
+          // Update message if provided
+          if (customMessage) {
+            const messageEl = onboardingWizard.querySelector('.onboarding-message');
+            if (messageEl) {
+              messageEl.textContent = customMessage;
+            }
+          }
+          
+          // Show/hide skip button based on allowSkip flag
+          const skipBtn = onboardingWizard.querySelector('.onboarding-skip-btn');
+          if (skipBtn) {
+            skipBtn.style.display = allowSkip ? 'block' : 'none';
+          }
         }
         if (emptyState) {
           emptyState.style.display = 'none';
         }
-        if (messagesContainer) {
-          // Hide or clear messages? Maybe just ensure wizard is on top or hide container content
-          // But styles say wizard is in messages-container
-          // So we hide other children?
-          // Actually, let's just show it. It might be appended.
-          // Wait, in HTML it is IN messages-container.
-          // We probably want to hide empty state and maybe messages if any?
-          // For now, simple toggling.
-        }
-        
-        // Hide input area or disable it? 
-        // Logic says "Hide empty state", wizard is visible.
       }
 
       function hideOnboardingWizard() {
         if (onboardingWizard) {
           onboardingWizard.style.display = 'none';
         }
-        // Empty state is managed by renderMessage/clearChat
+        // Show empty state if no messages
+        if (messages.length === 0 && emptyState) {
+            emptyState.style.display = 'flex';
+        }
+        // Ensure input is enabled
+        if (messageInput) {
+            messageInput.disabled = false;
+        }
       }
 
       // Add event listeners for Onboarding
       document.addEventListener('click', (e) => {
-        const target = e.target;
-        if (!target) return;
-        
-        // Handle onboarding buttons (delegation)
-        const btn = target.closest('.onboarding-btn, .onboarding-refresh');
-        if (btn) {
-            const action = btn.dataset.action;
-            if (action === 'install-ollama') {
-                vscode.postMessage({ 
-                    type: 'openExternalLink', 
-                    payload: { url: 'https://ollama.com' } 
-                });
-            } else if (action === 'test-ollama') {
-                vscode.postMessage({ type: 'testOllamaConnection' });
-            } else if (action === 'config-gemini') {
-                vscode.postMessage({ 
-                    type: 'openSettings', 
-                    payload: { settingId: 'junkrat.gemini.apiKey' } 
-                });
-            } else if (action === 'config-other') {
-                vscode.postMessage({ 
-                    type: 'openSettings', 
-                    payload: { settingId: 'activeProvider' } 
-                });
-            } else if (action === 'refresh-status') {
-                vscode.postMessage({ type: 'requestProviderList' });
-                // Also trigger a manual check via testOllamaConnection concept or just provider list
-                // Provider list refresh triggers nothing if status unchanged in backend, 
-                // but checking connection explicitly is better.
-                vscode.postMessage({ type: 'testOllamaConnection' }); 
+        try {
+          const target = e.target;
+          if (!target) return;
+          
+          // Handle onboarding buttons (delegation)
+          const btn = target.closest('.onboarding-btn, .onboarding-refresh, .onboarding-skip-btn');
+          if (btn) {
+              const action = btn.dataset.action;
+              
+              // Log the action to extension
+              console.log('Onboarding: ' + action + ' clicked');
+              safePostMessage({ 
+                type: 'onboardingAction', 
+                payload: { 
+                  action: action, 
+                  timestamp: Date.now(),
+                  context: { buttonLabel: btn.innerText }
+                } 
+              });
+
+              if (action === 'install-ollama') {
+                  safePostMessage({ 
+                      type: 'openExternalLink', 
+                      payload: { url: 'https://ollama.com' } 
+                  });
+              } else if (action === 'test-ollama') {
+                  safePostMessage({ type: 'testOllamaConnection' });
+              } else if (action === 'config-gemini') {
+                  safePostMessage({ 
+                      type: 'openSettings', 
+                      payload: { settingId: 'junkrat.gemini.apiKey' } 
+                  });
+              } else if (action === 'config-other') {
+                  safePostMessage({ 
+                      type: 'openSettings', 
+                      payload: { settingId: 'activeProvider' } 
+                  });
+              } else if (action === 'refresh-status') {
+                  safePostMessage({ type: 'requestProviderList' });
+                  // Also trigger a manual check via testOllamaConnection concept or just provider list
+                  // Provider list refresh triggers nothing if status unchanged in backend, 
+                  // but checking connection explicitly is better.
+                  safePostMessage({ type: 'testOllamaConnection' }); 
+              } else if (action === 'skip-onboarding') {
+                  hideOnboardingWizard();
+                  if (messageInput) {
+                      messageInput.disabled = false;
+                      messageInput.focus();
+                  }
+                  
+                  // Add visual feedback
+                  const skipMessage = {
+                      id: Date.now().toString(),
+                      role: 'system',
+                      text: '💡 Tip: You can configure AI providers anytime from the settings to unlock full functionality.',
+                      timestamp: Date.now()
+                  };
+                  messages.push(skipMessage);
+                  renderMessage(skipMessage);
+                  
+                  // Persist that we've seen onboarding? 
+                  // Ideally extension should know, but for now this is session based or until reload.
+              }
+          }
+        } catch (error) {
+          console.error('Onboarding click handler failed:', error);
+        }
+      });
+
+      // Global error handler
+      window.onerror = function(message, source, lineno, colno, error) {
+        console.error('Webview error:', { message, source, lineno, colno, error });
+        try {
+          vscode.postMessage({
+            type: 'webviewError',
+            payload: {
+              message: message,
+              source: source,
+              line: lineno,
+              column: colno,
+              stack: error ? error.stack : null
             }
+          });
+        } catch (e) {
+          console.error('Failed to report error to extension:', e);
+        }
+        return false;
+      };
+
+      window.addEventListener('unhandledrejection', function(event) {
+        console.error('Unhandled promise rejection:', event.reason);
+        try {
+          vscode.postMessage({
+            type: 'webviewError',
+            payload: {
+              message: 'Unhandled Promise Rejection: ' + (event.reason?.message || event.reason),
+              stack: event.reason?.stack || null
+            }
+          });
+        } catch (e) {
+          console.error('Failed to report promise rejection to extension:', e);
         }
       });
 

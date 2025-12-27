@@ -4,7 +4,9 @@
     "ecmaVersion": 2022,
     "sourceType": "module"
   },
-  "plugins": ["@typescript-eslint"],
+  "plugins": [
+    "@typescript-eslint"
+  ],
   "extends": [
     "eslint:recommended",
     "plugin:@typescript-eslint/recommended"
@@ -12,9 +14,16 @@
   "rules": {
     "no-unused-vars": "off",
     "@typescript-eslint/no-unused-vars": "warn",
-    "@typescript-eslint/no-explicit-any": "warn"
+    "@typescript-eslint/no-explicit-any": "warn",
+    "no-duplicate-case": "error"
   },
-  "ignorePatterns": ["out", "dist", "**/*.d.ts", "node_modules", ".vscode-test"],
+  "ignorePatterns": [
+    "out",
+    "dist",
+    "**/*.d.ts",
+    "node_modules",
+    ".vscode-test"
+  ],
   "env": {
     "node": true,
     "es6": true

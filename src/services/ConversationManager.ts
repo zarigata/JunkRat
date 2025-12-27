@@ -36,8 +36,22 @@ export class ConversationManager {
     private readonly _storageService?: StorageService
   ) {
     this._promptEngine = new PromptEngine();
-    this._phaseGenerator = new PhaseGenerator(this._promptEngine);
     this._contextManager = new ContextManager(this._promptEngine);
+    this._phaseGenerator = new PhaseGenerator(this._promptEngine, this._contextManager);
+  }
+
+  async analyzeWorkspace(): Promise<import('./ContextManager').WorkspaceContext | undefined> {
+    const context = await this._contextManager.analyzeWorkspace();
+
+    // Store in active conversation metadata if available
+    const activeConversation = this.getActiveConversation();
+    if (activeConversation && context) {
+      activeConversation.metadata.workspaceAnalyzed = true;
+      activeConversation.metadata.workspaceAnalyzedAt = Date.now();
+      this._touchConversation(activeConversation);
+    }
+
+    return context;
   }
 
   createConversation(title?: string): Conversation {
@@ -90,6 +104,22 @@ export class ConversationManager {
     providerId?: string
   ): Promise<SendMessageResult> {
     const conversation = this._resolveConversation(conversationId, userMessage);
+
+    // Graceful degradation check - moved before provider resolution
+    if (this._providerRegistry.listProviders().length === 0) {
+      const mockResponse = "⚠️ No AI providers are configured. Please configure a provider in Settings to start chatting.\n\n**Quick Setup:**\n- **Ollama (Recommended)**: Install Ollama locally and it will auto-connect\n- **Gemini**: Add your Google API key in settings\n- **OpenRouter**: Add your OpenRouter API key\n\nClick the settings icon in the chat header to get started.";
+
+      const userConversationMessage = this._createMessage('user', userMessage);
+      conversation.messages.push(userConversationMessage);
+
+      const assistantMessage = this._createMessage('assistant', mockResponse);
+      conversation.messages.push(assistantMessage);
+
+      this._touchConversation(conversation);
+
+      return { response: mockResponse, conversation };
+    }
+
     const provider = this._resolveProvider(providerId);
 
     const userConversationMessage = this._createMessage('user', userMessage);
@@ -130,10 +160,16 @@ export class ConversationManager {
 
     this._contextManager.configureForProvider(provider.id);
 
+    // Get workspace context if available
+    const workspaceContext = conversation.metadata.workspaceAnalyzed
+      ? await this._contextManager.analyzeWorkspace()
+      : undefined;
+
     const plan = await this._phaseGenerator.generatePhasePlan(
       requirements,
       conversation.metadata.id,
-      provider
+      provider,
+      workspaceContext
     );
 
     conversation.phasePlan = plan;
@@ -166,6 +202,8 @@ export class ConversationManager {
     conversation.phasePlan = undefined;
     conversation.metadata.phaseCount = undefined;
     conversation.metadata.requirementsSummary = undefined;
+    conversation.metadata.workspaceAnalyzed = undefined;
+    conversation.metadata.workspaceAnalyzedAt = undefined;
     conversation.metadata.state = ConversationState.IDLE;
     this._touchConversation(conversation);
 
@@ -277,6 +315,17 @@ export class ConversationManager {
   ): Promise<string> {
     this._setState(conversation, ConversationState.ANALYZING_REQUIREMENTS);
 
+    // If auto-analyze is enabled/preferred, we could do it here, but per plan user triggers it manually or we check if recent.
+    // We'll rely on what's in metadata or just try to get it if reasonable?
+    // Plan: "Optionally auto-trigger... in ChatScript".
+    // Here: "Before calling... check if available". 
+    // I already implemented logic in _generatePlan to check metadata or get it.
+
+    // Auto-analyze check (per plan point 7 "Auto-trigger... if not already analyzed")
+    // If not analyzed, maybe we should trigger it silently?
+    // User plan: "Modify _generatePlan... check if workspace context is available"
+    // I'll stick to that.
+
     const summary = await this._performRequirementsAnalysis(conversation, provider);
     conversation.metadata.requirementsSummary = summary;
 
@@ -370,6 +419,20 @@ export class ConversationManager {
       return 'Unable to generate a phase plan without requirements. Please provide more details.';
     }
 
+    // Get workspace context if available
+    const workspaceContext = conversation.metadata.workspaceAnalyzed
+      ? await this._contextManager.analyzeWorkspace()
+      : (await this._contextManager.analyzeWorkspace()); // Auto-analyze if not done? 
+    // The plan says "check if workspace context is available - If available, pass it".
+    // It implies we should try to get it if we can. 
+    // Let's rely on the explicit button or auto-trigger from UI. 
+    // If I force it here, it might be slow.
+    // But the context manager has caching! So calling analyzeWorkspace() is cheap if done recently.
+    // So I will call it. This ensures we always have it if possible.
+
+    // Re-check context
+    const context = await this.analyzeWorkspace();
+
     const excludedProviders: string[] = [];
     let currentProvider = provider;
     let lastError: Error | undefined;
@@ -379,7 +442,8 @@ export class ConversationManager {
         const plan = await this._phaseGenerator.generatePhasePlan(
           requirements,
           conversation.metadata.id,
-          currentProvider
+          currentProvider,
+          context
         );
 
         conversation.phasePlan = plan;

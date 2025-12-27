@@ -74,11 +74,13 @@ export function getSettingsHelperStyles(): string {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px;
+      padding: 12px;
       border-radius: 4px;
       background: var(--vscode-input-background);
       border: 1px solid var(--vscode-input-border);
-      gap: 12px;
+      gap: 16px;
+      min-height: 60px;
+      flex-wrap: wrap;
     }
 
     .provider-info {
@@ -86,6 +88,14 @@ export function getSettingsHelperStyles(): string {
       align-items: center;
       gap: 8px;
       flex: 1;
+    }
+
+    .provider-name {
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 500;
     }
 
     .provider-info .codicon {
@@ -96,6 +106,7 @@ export function getSettingsHelperStyles(): string {
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
+      align-items: center;
     }
 
     .status-badge {
@@ -105,6 +116,11 @@ export function getSettingsHelperStyles(): string {
       font-weight: 500;
       background: var(--vscode-badge-background);
       color: var(--vscode-badge-foreground);
+    }
+
+    .status-badge:hover {
+      opacity: 0.9;
+      cursor: default;
     }
 
     .status-badge.enabled {
@@ -128,17 +144,19 @@ export function getSettingsHelperStyles(): string {
     }
 
     .status-badge.warning {
-      background: var(--vscode-testing-iconQueued, #e3b341);
-      color: var(--vscode-editor-foreground);
+      background: var(--vscode-notificationsWarningIcon-foreground, #e3b341);
+      color: var(--vscode-editor-background);
     }
 
     .action-buttons {
       display: flex;
       gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
     }
 
     .action-button {
-      padding: 6px 12px;
+      padding: 8px 14px;
       border-radius: 4px;
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
@@ -149,6 +167,8 @@ export function getSettingsHelperStyles(): string {
       align-items: center;
       gap: 6px;
       transition: background 0.1s ease;
+      white-space: nowrap;
+      min-width: fit-content;
     }
 
     .action-button.secondary {

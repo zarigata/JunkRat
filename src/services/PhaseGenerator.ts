@@ -8,6 +8,7 @@ import {
 } from '../types/conversation';
 import { PromptEngine } from './PromptEngine';
 import { PromptRole } from '../types/prompts';
+import { ContextManager, WorkspaceContext } from './ContextManager';
 
 interface PhaseCountRange {
   minPhases: number;
@@ -29,12 +30,16 @@ export interface PhasePlanAnalysis {
 }
 
 export class PhaseGenerator {
-  constructor(private readonly _promptEngine: PromptEngine) { }
+  constructor(
+    private readonly _promptEngine: PromptEngine,
+    private readonly _contextManager: ContextManager
+  ) { }
 
   async generatePhasePlan(
     requirements: string,
     conversationId: string,
-    provider: IAIProvider
+    provider: IAIProvider,
+    workspaceContext?: WorkspaceContext
   ): Promise<PhasePlan> {
     const phaseCountRange = this._determinePhaseCount(requirements);
 
@@ -46,12 +51,12 @@ export class PhaseGenerator {
       additionalContext: {},
     });
 
-    const initialResponse = await this._requestPhasePlan(provider, renderedPrompt);
+    const initialResponse = await this._requestPhasePlan(provider, renderedPrompt, false, workspaceContext);
 
     try {
       return this._buildPhasePlan(initialResponse, conversationId, phaseCountRange, requirements);
     } catch (error) {
-      const retryResponse = await this._requestPhasePlan(provider, renderedPrompt, true);
+      const retryResponse = await this._requestPhasePlan(provider, renderedPrompt, true, workspaceContext);
       return this._buildPhasePlan(retryResponse, conversationId, phaseCountRange, requirements);
     }
   }
@@ -87,11 +92,20 @@ export class PhaseGenerator {
   private async _requestPhasePlan(
     provider: IAIProvider,
     renderedPrompt: ReturnType<PromptEngine['renderPrompt']>,
-    isRetry = false
+    isRetry = false,
+    workspaceContext?: WorkspaceContext
   ): Promise<ChatResponse> {
     const messages: ChatRequest['messages'] = [
       { role: 'system', content: renderedPrompt.systemMessage },
     ];
+
+    if (workspaceContext) {
+      const contextSummary = this._contextManager.formatWorkspaceContextForPrompt(workspaceContext);
+      messages.push({
+        role: 'system',
+        content: `## WORKSPACE CONTEXT:\n${contextSummary}`
+      });
+    }
 
     if (renderedPrompt.userMessage) {
       messages.push({ role: 'user', content: renderedPrompt.userMessage });
@@ -480,4 +494,5 @@ export class PhaseGenerator {
     };
   }
 }
+
 

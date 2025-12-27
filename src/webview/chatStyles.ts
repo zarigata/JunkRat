@@ -24,6 +24,9 @@ export function getChatStyles(): string {
       flex-direction: column;
       height: 100vh;
       overflow: hidden;
+      min-width: 280px;
+      box-sizing: border-box;
+      overflow-x: auto;
     }
 
     /* Chat Header */
@@ -61,14 +64,26 @@ export function getChatStyles(): string {
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 32px;
+      min-width: 32px;
+      width: auto;
+      padding: 0 12px;
+      gap: 6px;
       height: 32px;
       border: none;
       border-radius: 4px;
       background-color: var(--vscode-button-secondaryBackground);
       color: var(--vscode-foreground);
+      font-weight: 600;
       cursor: pointer;
+      position: relative;
+      overflow: hidden;
       transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s;
+    }
+
+    .header-btn span:not(.codicon) {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
     .header-btn:hover {
@@ -82,6 +97,25 @@ export function getChatStyles(): string {
       transform: translateY(0) scale(0.97);
     }
 
+    /* Ripple Effect */
+    .header-btn::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 0;
+      height: 0;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.3);
+      transform: translate(-50%, -50%);
+      transition: width 0.6s, height 0.6s;
+    }
+
+    .header-btn:active::before {
+      width: 200%;
+      height: 200%;
+    }
+
     .header-btn .codicon {
       font-size: 18px;
     }
@@ -89,8 +123,39 @@ export function getChatStyles(): string {
     .header-btn.primary {
       background-color: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
+      animation: subtlePulse 2s ease-in-out infinite;
+    }
+
+    @keyframes subtlePulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0, 122, 204, 0.4); }
+      50% { box-shadow: 0 0 0 4px rgba(0, 122, 204, 0); }
     }
     
+    #history-btn {
+      position: relative;
+    }
+
+    #history-btn::after {
+      content: attr(data-count);
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+      border-radius: 10px;
+      padding: 2px 6px;
+      font-size: 10px;
+      font-weight: 700;
+      /* Only show if content is not empty handled by attribute logic, 
+         CSS content: attr(x) will display empty string if attr is missing or empty,
+         but visual padding remains. We can handle display logic in JS or complex CSS selector if supported :not([data-count=""]) */
+      display: none;
+    }
+
+    #history-btn[data-count]:not([data-count=""])::after {
+        display: block;
+    }
+
     .header-btn.danger:hover {
       background-color: var(--vscode-errorForeground);
       color: var(--vscode-button-foreground);
@@ -99,6 +164,7 @@ export function getChatStyles(): string {
     .messages-container {
       flex-grow: 1;
       overflow-y: auto;
+      min-width: 260px;
       padding: 16px;
       scroll-behavior: smooth;
       overscroll-behavior: contain;
@@ -192,6 +258,49 @@ export function getChatStyles(): string {
       font-weight: 600;
       margin-top: 20px;
       opacity: 0.9;
+    }
+
+    .empty-state-config-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 24px;
+      margin: 20px 0;
+      background: linear-gradient(135deg, var(--vscode-button-background), var(--vscode-textLink-activeForeground));
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 122, 204, 0.3);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .empty-state-config-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0, 122, 204, 0.4);
+    }
+
+    .empty-state-config-btn:active {
+      transform: translateY(0) scale(0.98);
+    }
+
+    .empty-state-config-btn::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+      transition: left 0.5s;
+    }
+
+    .empty-state-config-btn:hover::after {
+      left: 100%;
     }
 
     @keyframes float {
@@ -1068,6 +1177,11 @@ export function getChatStyles(): string {
         to { transform: translateY(0); opacity: 1; }
     }
 
+    @keyframes shimmer {
+      0% { background-position: -200% center; }
+      100% { background-position: 200% center; }
+    }
+
     .history-modal-header {
       display: flex;
       justify-content: space-between;
@@ -1100,6 +1214,7 @@ export function getChatStyles(): string {
     }
 
     /* Responsive Styles */
+    /* Responsive Styles */
     @media (max-width: 350px) {
         .message {
             max-width: 95%;
@@ -1108,11 +1223,51 @@ export function getChatStyles(): string {
         
         .chat-header {
             padding: 6px 8px;
+            flex-wrap: nowrap;
+            overflow: hidden;
+        }
+
+        .header-actions {
+            gap: 4px;
         }
         
         .header-btn {
             width: 28px;
             height: 28px;
+            min-width: 28px;
+            padding: 0;
+        }
+
+        .header-btn span:not(.codicon) {
+            display: none;
+        }
+
+        .phase-dashboard { 
+            display: none !important; 
+        }
+
+        .provider-selector { 
+            padding: 8px 12px; 
+        }
+
+        .settings-button span:not(.codicon) { 
+            display: none; 
+        }
+
+        .onboarding-option {
+          padding: 16px;
+          min-height: auto;
+        }
+
+        .onboarding-btn {
+          width: 100%;
+          justify-content: center;
+          margin-bottom: 8px;
+          padding: 12px 14px;
+        }
+
+        .onboarding-options {
+          gap: 12px;
         }
     }
 
@@ -1145,6 +1300,34 @@ export function getChatStyles(): string {
       }
     }
 
+    /* Intermediate Breakpoint */
+    @media (max-width: 300px) {
+        .empty-state { padding: 16px; }
+        .empty-state .codicon { font-size: 48px; }
+        .empty-state-config-btn { padding: 10px 16px; font-size: 13px; }
+        .feature-item { font-size: 12px; padding: 6px 10px; }
+
+        #onboarding-wizard {
+          padding: 16px;
+        }
+
+        .onboarding-content {
+          max-width: 100%;
+        }
+
+        .onboarding-option > .codicon {
+          font-size: 24px;
+        }
+    }
+
+    @media (max-width: 280px) {
+      .chat-container { min-width: 250px; overflow-x: scroll; }
+      .messages-container { min-width: 240px; }
+      #onboarding-wizard { padding: 12px; }
+      .onboarding-option { padding: 16px; }
+      .onboarding-btn { padding: 12px 14px; width: 100%; }
+    }
+
     /* Ultra-Narrow Sidebar optimizations */
     @media (max-width: 250px) {
       .messages-container {
@@ -1154,6 +1337,26 @@ export function getChatStyles(): string {
       .message {
         padding: 8px 10px;
         font-size: 12px;
+      }
+
+      .header-actions { 
+        flex-direction: column; 
+        width: 100%; 
+        gap: 2px; 
+      }
+
+      .header-btn { 
+        width: 100%; 
+        justify-content: flex-start; 
+        padding: 6px 8px; 
+      }
+
+      .conversation-state-container { 
+        padding: 6px 8px; 
+      }
+
+      .workflow-actions-container { 
+        padding: 8px; 
       }
 
       .provider-status span:not(.codicon) {
@@ -1424,54 +1627,108 @@ export function getChatStyles(): string {
       padding: 20px;
       text-align: center;
       background-color: var(--vscode-editor-background);
-      position: absolute;
-      top: 0;
-      left: 0;
+      position: relative;
+      /* removed absolute positioning to keep input visible */
       z-index: 10;
+      animation: fadeIn 0.4s ease-out;
     }
 
     .onboarding-content {
       max-width: 400px;
       width: 100%;
+      animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     #onboarding-wizard h2 {
-      font-size: 20px;
+      font-size: 22px;
       font-weight: 600;
       margin-bottom: 8px;
+      background: linear-gradient(135deg, var(--vscode-textLink-activeForeground), var(--vscode-charts-purple));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
 
     #onboarding-wizard p {
       color: var(--vscode-descriptionForeground);
-      margin-bottom: 24px;
-      font-size: 14px;
+      margin-bottom: 28px;
+      font-size: 15px;
     }
 
     .onboarding-options {
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 20px;
       margin-bottom: 24px;
+      width: 100%;
     }
 
     .onboarding-option {
       background-color: var(--vscode-editor-inactiveSelectionBackground);
       border: 1px solid var(--vscode-widget-border);
-      border-radius: 8px;
-      padding: 16px;
+      border-radius: 12px;
+      padding: 20px;
       text-align: left;
-      transition: all 0.2s;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      min-height: 180px;
+      position: relative;
+      overflow: hidden;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .onboarding-option:nth-child(1) {
+      animation: fadeInUp 0.5s ease-out 0.1s backwards;
+    }
+    
+    .onboarding-option:nth-child(2) {
+      animation: fadeInUp 0.5s ease-out 0.2s backwards;
+    }
+    
+    .onboarding-option:nth-child(3) {
+      animation: fadeInUp 0.5s ease-out 0.3s backwards;
+    }
+
+    .onboarding-option.recommended {
+      border-color: rgba(0, 122, 204, 0.4);
+      background: linear-gradient(135deg, rgba(0, 122, 204, 0.12) 0%, rgba(88, 86, 214, 0.12) 100%);
+      box-shadow: 0 2px 12px rgba(0, 122, 204, 0.15);
+    }
+
+    .onboarding-option.recommended::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(0, 122, 204, 0.6), transparent);
+      background-size: 200% 100%;
+      animation: shimmer 3s infinite;
+    }
+
+    .onboarding-option:nth-child(2) {
+      border-color: rgba(255, 140, 0, 0.3);
+      background: linear-gradient(135deg, rgba(255, 140, 0, 0.1) 0%, rgba(255, 69, 140, 0.1) 100%);
+      box-shadow: 0 2px 12px rgba(255, 140, 0, 0.12);
+    }
+
+    .onboarding-option:nth-child(3) {
+      border-color: rgba(128, 128, 128, 0.3);
+      background: linear-gradient(135deg, rgba(128, 128, 128, 0.08) 0%, rgba(160, 160, 160, 0.08) 100%);
     }
 
     .onboarding-option:hover {
       border-color: var(--vscode-focusBorder);
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      transform: translateY(-4px) scale(1.02);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
     }
 
-    .onboarding-option.recommended {
-      border-color: var(--vscode-textLink-activeForeground);
-      background-color: rgba(0, 122, 204, 0.05); /* Slight tint */
+    .onboarding-option.recommended:hover {
+      box-shadow: 0 8px 24px rgba(0, 122, 204, 0.3);
+    }
+
+    .onboarding-option:nth-child(2):hover {
+      box-shadow: 0 8px 24px rgba(255, 140, 0, 0.25);
     }
 
     .onboarding-option h3 {
@@ -1480,33 +1737,81 @@ export function getChatStyles(): string {
       margin: 0 0 4px 0;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
+      color: var(--vscode-foreground);
+    }
+
+    .onboarding-option > .codicon {
+      font-size: 32px;
+      margin-bottom: 12px;
+      opacity: 0.9;
     }
 
     .onboarding-option p {
       margin: 0 0 12px 0;
+      font-size: 13px;
+      opacity: 0.85;
+    }
+    
+    .onboarding-steps {
+      margin: 12px 0;
+      padding: 12px;
+      background: var(--vscode-textBlockQuote-background);
+      border-radius: 6px;
+      border-left: 3px solid var(--vscode-textLink-activeForeground);
+    }
+    
+    .onboarding-steps ol {
+      margin: 0;
+      padding-left: 20px;
       font-size: 12px;
-      opacity: 0.8;
+      line-height: 1.6;
+      color: var(--vscode-descriptionForeground);
+    }
+    
+    .onboarding-steps li {
+      margin-bottom: 6px;
+    }
+    
+    .onboarding-steps code {
+      background: var(--vscode-textCodeBlock-background);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
     }
 
     .onboarding-btn {
-      padding: 6px 14px;
+      padding: 16px 18px;
       background-color: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
       border: none;
       border-radius: 4px;
       cursor: pointer;
-      font-size: 12px;
-      font-weight: 500;
+      font-size: 13px;
+      font-weight: 600;
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      transition: background-color 0.2s;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       margin-right: 8px;
+      min-width: 140px;
+    }
+
+    .onboarding-btn .codicon {
+      font-size: 16px;
+      margin-right: 6px;
     }
 
     .onboarding-btn:hover {
       background-color: var(--vscode-button-hoverBackground);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 122, 204, 0.3);
+    }
+
+    .onboarding-btn:active {
+      transform: translateY(0) scale(0.98);
+      box-shadow: 0 2px 6px rgba(0, 122, 204, 0.2);
     }
 
     .onboarding-btn.secondary {
@@ -1517,25 +1822,300 @@ export function getChatStyles(): string {
     .onboarding-btn.secondary:hover {
       background-color: var(--vscode-button-secondaryHoverBackground);
     }
+    
+    .onboarding-btn.secondary:active {
+      transform: translateY(0) scale(0.98);
+    }
+    
+    .onboarding-btn.loading {
+      opacity: 0.7;
+      cursor: wait;
+      pointer-events: none;
+    }
+    
+    .onboarding-btn.loading::after {
+      content: '';
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      margin-left: 8px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
 
     .onboarding-refresh {
       background: none;
       border: none;
       color: var(--vscode-textLink-foreground);
       cursor: pointer;
-      font-size: 13px;
+      font-size: 14px;
       display: flex;
       align-items: center;
       gap: 6px;
       margin: 0 auto;
-      padding: 8px;
+      padding: 10px 16px;
       opacity: 0.8;
-      transition: opacity 0.2s;
+      transition: all 0.2s ease;
+      border-radius: 6px;
     }
 
     .onboarding-refresh:hover {
       opacity: 1;
-      text-decoration: underline;
+      background: var(--vscode-button-secondaryBackground);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+
+    .onboarding-skip-btn {
+      margin-top: 20px;
+      padding: 14px 24px;
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: 1px solid var(--vscode-button-border);
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      width: 100%;
+      justify-content: center;
+      max-width: 320px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .onboarding-skip-btn:hover {
+      background-color: var(--vscode-button-secondaryHoverBackground);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    .onboarding-skip-btn:active {
+      transform: translateY(0);
+    }
+    
+    .onboarding-skip-btn .codicon {
+      font-size: 16px;
+    }
+    /* Workspace Context Card */
+    .workspace-context-card {
+      background-color: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+      animation: slideInFromLeft 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+      max-width: 85%;
+      margin-right: auto;
+      border-left: 3px solid var(--vscode-textLink-activeForeground);
+    }
+
+    .workspace-context-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: var(--vscode-textLink-activeForeground);
+    }
+
+    .workspace-context-summary {
+      font-size: 13px;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+
+    .workspace-context-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 8px;
+      background-color: var(--vscode-textBlockQuote-background);
+      padding: 8px;
+      border-radius: 6px;
+    }
+
+    .context-grid-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .context-grid-item .label {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .context-grid-item .value {
+      font-size: 12px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .context-grid-item .value .codicon {
+      font-size: 14px;
+    }
+
+    /* Git Scan Report */
+    .git-scan-result {
+      background: var(--vscode-editorInfo-background);
+      border-left: 3px solid var(--vscode-editorInfo-foreground);
+      padding: 12px;
+      margin: 8px 0;
+      border-radius: 4px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    /* Dashboard Actions */
+    .dashboard-actions {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+
+    .dashboard-btn {
+      padding: 6px 12px;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.2s;
+    }
+
+    .dashboard-btn:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    }
+
+    /* Run Analysis Result */
+    .run-analysis-result {
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-widget-border);
+        border-radius: 6px;
+        padding: 0;
+        overflow: hidden;
+        margin-bottom: 12px;
+        font-size: 13px;
+    }
+
+    .analysis-header {
+        padding: 10px 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-bottom: 1px solid var(--vscode-widget-border);
+        background: var(--vscode-editor-inactiveSelectionBackground);
+    }
+
+    .analysis-header.success {
+        border-left: 3px solid var(--vscode-testing-iconPassed);
+    }
+
+    .analysis-header.failure {
+        border-left: 3px solid var(--vscode-testing-iconFailed);
+    }
+    
+    .analysis-header .codicon-pass {
+        color: var(--vscode-testing-iconPassed);
+    }
+    
+    .analysis-header .codicon-error {
+        color: var(--vscode-testing-iconFailed);
+    }
+
+    .analysis-header code {
+        background: var(--vscode-textCodeBlock-background);
+        padding: 2px 4px;
+        border-radius: 3px;
+        font-family: var(--vscode-editor-font-family);
+    }
+
+    .analysis-header .duration {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+    }
+
+    .analysis-summary, .affected-phases, .analysis-suggestions {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--vscode-widget-border);
+    }
+
+    .analysis-summary strong, .affected-phases strong, .analysis-suggestions strong {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--vscode-foreground);
+    }
+
+    .affected-phases ul, .analysis-suggestions ul {
+        margin: 0;
+        padding-left: 16px;
+    }
+
+    .affected-phases li, .analysis-suggestions li {
+        margin-bottom: 4px;
+        line-height: 1.4;
+    }
+
+    .output-details {
+        padding: 8px 12px;
+        background: var(--vscode-textBlockQuote-background);
+    }
+
+    .output-details summary {
+        cursor: pointer;
+        padding: 4px 0;
+        color: var(--vscode-textLink-foreground);
+        font-weight: 500;
+        user-select: none;
+    }
+
+    .output-block {
+        margin-top: 8px;
+        font-family: var(--vscode-editor-font-family);
+        font-size: 12px;
+    }
+
+    .output-block strong {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--vscode-descriptionForeground);
+    }
+
+    .output-block pre {
+        margin: 0;
+        padding: 8px;
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-widget-border);
+        border-radius: 4px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        max-height: 300px;
+    }
+
+    .output-block.stdout pre {
+        color: var(--vscode-foreground);
+    }
+
+    .output-block.stderr pre {
+        color: var(--vscode-testing-iconFailed);
+        border-color: rgba(255, 0, 0, 0.2);
     }
   `;
 }

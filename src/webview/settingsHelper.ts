@@ -3,6 +3,50 @@ export function getSettingsHelperScript(): string {
     (function () {
       const vscode = acquireVsCodeApi();
 
+      // Safe postMessage wrapper
+      function safePostMessage(message) {
+        try {
+          vscode.postMessage(message);
+        } catch (error) {
+          console.error('Settings postMessage failed:', error, 'Message:', message);
+        }
+      }
+
+      // Global error handler
+      window.onerror = function(message, source, lineno, colno, error) {
+        console.error('Settings webview error:', { message, source, lineno, colno, error });
+        try {
+          safePostMessage({
+            type: 'webviewError',
+            payload: {
+              message: message,
+              source: source,
+              line: lineno,
+              column: colno,
+              stack: error ? error.stack : null
+            }
+          });
+        } catch (e) {
+          console.error('Failed to report error to extension:', e);
+        }
+        return false;
+      };
+
+      window.addEventListener('unhandledrejection', function(event) {
+        console.error('Settings unhandled promise rejection:', event.reason);
+        try {
+          safePostMessage({
+            type: 'webviewError',
+            payload: {
+              message: 'Unhandled Promise Rejection: ' + (event.reason?.message || event.reason),
+              stack: event.reason?.stack || null
+            }
+          });
+        } catch (e) {
+          console.error('Failed to report promise rejection to extension:', e);
+        }
+      });
+
       let providers = [];
       let validationResults = {};
       let lastValidationMessage = null;
@@ -78,87 +122,91 @@ export function getSettingsHelperScript(): string {
         providerList.innerHTML = '';
 
         if (providers.length === 0) {
-          providerList.innerHTML = \`
-            <div class="empty-state">
-              <div class="codicon codicon-gear"></div>
-              <p>No providers configured yet.</p>
-              <p>Open VS Code Settings to configure JunkRat providers.</p>
-            </div>
-          \`;
+          providerList.innerHTML = '<div class="empty-state">' +
+            '<div class="codicon codicon-gear"></div>' +
+            '<p>No providers configured yet.</p>' +
+            '<p>Open VS Code Settings to configure JunkRat providers.</p>' +
+            '</div>';
           return;
         }
 
         providers.forEach((provider) => {
           const item = document.createElement('li');
           item.className = 'provider-status-item';
-          item.innerHTML = \`
-            <div class="provider-info">
-              <span class="codicon codicon-robot"></span>
-              <div>
-                <div>\${provider.name}</div>
-                <div class="status-badges">\${providerStatusBadges(provider)}</div>
-              </div>
-            </div>
-            <div class="action-buttons">
-              <button class="action-button secondary" data-action="configure" data-provider="\${provider.id}">
-                <span class="codicon codicon-settings"></span>
-                Configure
-              </button>
-              <button class="action-button" data-action="test" data-provider="\${provider.id}">
-                <span class="codicon codicon-check"></span>
-                Test
-              </button>
-            </div>
-          \`;
+          item.innerHTML = '<div class="provider-info">' +
+            '<span class="codicon codicon-robot"></span>' +
+            '<div>' +
+              '<div class="provider-name">' + provider.name + '</div>' +
+              '<div class="status-badges">' + providerStatusBadges(provider) + '</div>' +
+            '</div>' +
+            '</div>' +
+            '<div class="action-buttons">' +
+              '<button class="action-button secondary" data-action="configure" data-provider="' + provider.id + '">' +
+                '<span class="codicon codicon-settings"></span>' +
+                'Configure' +
+              '</button>' +
+              '<button class="action-button" data-action="test" data-provider="' + provider.id + '">' +
+                '<span class="codicon codicon-check"></span>' +
+                'Test' +
+              '</button>' +
+            '</div>';
 
           providerList.appendChild(item);
         });
       }
 
       function handleAction(event) {
-        const target = event.target.closest('button[data-action]');
-        if (!target) {
-          return;
-        }
+        try {
+          const target = event.target.closest('button[data-action]');
+          if (!target) {
+            return;
+          }
 
-        const action = target.getAttribute('data-action');
-        const providerId = target.getAttribute('data-provider');
-        if (!action || !providerId) {
-          return;
-        }
+          const action = target.getAttribute('data-action');
+          const providerId = target.getAttribute('data-provider');
+          if (!action || !providerId) {
+            return;
+          }
 
-        switch (action) {
-          case 'configure':
-            vscode.postMessage({ type: 'openSettings', payload: { settingId: 'junkrat.' + providerId } });
-            break;
-          case 'test':
-            target.disabled = true;
-            target.classList.add('loading');
-            vscode.postMessage({ type: 'testProvider', payload: { providerId } });
-            break;
+          switch (action) {
+            case 'configure':
+              safePostMessage({ type: 'openSettings', payload: { settingId: 'junkrat.' + providerId } });
+              break;
+            case 'test':
+              target.disabled = true;
+              target.classList.add('loading');
+              safePostMessage({ type: 'testProvider', payload: { providerId } });
+              break;
+          }
+        } catch (error) {
+          console.error('Button action failed:', error);
         }
       }
 
       window.addEventListener('message', (event) => {
-        const message = event.data;
+        try {
+          const message = event.data;
 
-        switch (message.type) {
-          case 'providerStatusUpdate':
-            providers = message.payload.providers || [];
-            validationResults = message.payload.validationResults || {};
-            renderProviders();
-            setState();
-            break;
-          case 'validationResult':
-            lastValidationMessage = message.payload.message || null;
-            validationResults = {
-              ...validationResults,
-              ...message.payload.validationResults,
-            };
-            renderValidationMessage(lastValidationMessage);
-            renderProviders();
-            setState();
-            break;
+          switch (message.type) {
+            case 'providerStatusUpdate':
+              providers = message.payload.providers || [];
+              validationResults = message.payload.validationResults || {};
+              renderProviders();
+              setState();
+              break;
+            case 'validationResult':
+              lastValidationMessage = message.payload.message || null;
+              validationResults = {
+                ...validationResults,
+                ...message.payload.validationResults,
+              };
+              renderValidationMessage(lastValidationMessage);
+              renderProviders();
+              setState();
+              break;
+          }
+        } catch (error) {
+          console.error('Message handler failed:', error);
         }
       });
 
@@ -168,13 +216,17 @@ export function getSettingsHelperScript(): string {
 
       if (validateAllButton) {
         validateAllButton.addEventListener('click', () => {
-          vscode.postMessage({ type: 'validateAll' });
+          try {
+            safePostMessage({ type: 'validateAll' });
+          } catch (error) { console.error('Validate all failed:', error); }
         });
       }
 
       if (openSettingsButton) {
         openSettingsButton.addEventListener('click', () => {
-          vscode.postMessage({ type: 'openNativeSettings' });
+          try {
+            safePostMessage({ type: 'openNativeSettings' });
+          } catch (error) { console.error('Open settings failed:', error); }
         });
       }
 
@@ -183,8 +235,8 @@ export function getSettingsHelperScript(): string {
       renderProviders();
 
       // Notify host
-      vscode.postMessage({ type: 'ready' });
-      vscode.postMessage({ type: 'requestProviderStatus' });
+      safePostMessage({ type: 'ready' });
+      safePostMessage({ type: 'requestProviderStatus' });
     })();
   `;
 }

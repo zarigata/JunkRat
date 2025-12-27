@@ -13,6 +13,7 @@ import {
   ConversationStateMessage,
   ModelListMessage,
   NoProvidersReadyMessage,
+  WorkspaceAnalyzedMessage,
 } from '../types/messages';
 import { ConfigurationService } from '../services/ConfigurationService';
 import { ProviderFactory } from './ProviderFactory';
@@ -38,14 +39,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   // Polling optimization state
   private _pollingAttempts: number = 0;
-  private readonly _maxPollingAttempts: number = 36; // 3 minutes at 5s intervals
+  private readonly _maxPollingAttempts: number = 30; // 5 minutes at 10s intervals
   private _pollingBackoffMultiplier: number = 1;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
     private readonly _chatService: ChatService,
     private readonly _configService: ConfigurationService,
-    private readonly _telemetryService?: TelemetryService
+    private readonly _telemetryService: TelemetryService,
+    private readonly _outputChannel?: vscode.OutputChannel
   ) { }
 
   /**
@@ -109,8 +111,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       clearInterval(this._pollingInterval);
     }
 
-    // Poll with dynamic interval
-    const interval = 5000 * this._pollingBackoffMultiplier;
+    // Poll with dynamic interval (start at 10s)
+    const interval = 10000 * this._pollingBackoffMultiplier;
 
     this._pollingInterval = setInterval(async () => {
       await this._checkProviderAndRefresh();
@@ -152,7 +154,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const message: NoProvidersReadyMessage = {
           type: 'noProvidersReady',
           payload: {
-            message: 'No AI providers are ready. Please configure a provider in Settings.',
+            message: 'No AI providers are ready after 5 minutes of checking. Please configure a provider in Settings or install Ollama.',
             showOnboarding: true
           }
         };
@@ -163,9 +165,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     this._pollingAttempts++;
 
-    // Implement backoff after 1 minute (12 attempts)
-    if (this._pollingAttempts === 12) {
-      this._pollingBackoffMultiplier = 2;
+    // Early warning at 30 seconds (3 attempts)
+    if (this._pollingAttempts === 3 && !this._lastProviderAvailable) {
+      const message: NoProvidersReadyMessage = {
+        type: 'noProvidersReady',
+        payload: {
+          message: 'Still checking for AI providers... You can configure one now or skip to start chatting.',
+          showOnboarding: true,
+          allowSkip: true
+        }
+      };
+      this.sendMessageToWebview(message);
+    }
+
+    // Implement backoff after 10 attempts (100 seconds)
+    if (this._pollingAttempts === 10) {
+      this._pollingBackoffMultiplier = 3; // Increase to 30s
       // Restart polling with new interval
       this._startProviderPolling();
       return;
@@ -194,13 +209,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
       }
 
-      await this._sendProviderList();
-
       // If Ollama became available, also refresh model list
       if (isAvailable && activeProviderId === 'ollama') {
         await this._sendModelList();
       }
     }
+
+    // Always send provider status to keep webview synchronized
+    await this._sendProviderList();
   }
 
   private async _sendConversationState(): Promise<void> {
@@ -389,13 +405,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    */
   private async _handleMessage(message: WebviewMessage): Promise<void> {
     switch (message.type) {
+      case 'webviewError':
+        this._handleWebviewError(message.payload);
+        break;
+
       case 'ready':
         await this._initializeProviderList();
         await this._sendConversationState();
         await this._sendActivePhasePlan();
         break;
 
-      case 'sendMessage':
+      case 'onboardingAction':
+        this._handleOnboardingAction(message.payload);
+        break;
+
+      case 'sendMessage': {
         const userText = message.payload.text;
         this._lastUserMessage = userText; // Store for retry
         console.log('User message:', userText);
@@ -427,6 +451,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           await this._handleAIError(error);
         }
         break;
+      }
 
       case 'retryLastRequest':
         await this._handleRetryLastRequest();
@@ -582,7 +607,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._sendPhaseProgress();
         break;
 
-      case 'testOllamaConnection':
+      case 'testOllamaConnection': {
         const isAvailable = await this._chatService.checkProviderAvailability('ollama');
         if (isAvailable) {
           vscode.window.showInformationMessage('Verifying connection...');
@@ -593,12 +618,119 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           await this._checkProviderAndRefresh();
         }
         break;
+      }
 
       case 'openExternalLink':
         if (message.payload.url) {
           vscode.env.openExternal(vscode.Uri.parse(message.payload.url));
         }
         break;
+
+      case 'scanGitProgress':
+        await this._handleScanGitProgress(message.payload?.dryRun);
+        break;
+
+      case 'analyzeWorkspace':
+        await this._handleAnalyzeWorkspace();
+        break;
+
+
+
+      case 'runAndAnalyze':
+        await this._handleRunAndAnalyze(message.payload);
+        break;
+    }
+  }
+
+  private _handleWebviewError(payload: any): void {
+    const errorMessage = payload.message || 'Unknown webview error';
+    const source = payload.source ? ` in ${payload.source}` : '';
+    const location = payload.line ? ` at line ${payload.line}:${payload.column || 0}` : '';
+    const stack = payload.stack || '';
+    const fullMessage = `[Webview Error] ${errorMessage}${source}${location}`;
+
+    console.error(fullMessage);
+    if (stack) {
+      console.error('Stack trace:', stack);
+    }
+
+    if (this._outputChannel) {
+      this._outputChannel.appendLine(fullMessage);
+      if (stack) {
+        this._outputChannel.appendLine(stack);
+      }
+    }
+
+    // Show user-friendly notification for critical errors
+    if (errorMessage.includes('postMessage') || errorMessage.includes('Button failed') || errorMessage.includes('Failed to report')) {
+      vscode.window.showErrorMessage(
+        `JunkRat UI Error: ${errorMessage}. Check Output panel for details.`,
+        'Open Output'
+      ).then(selection => {
+        if (selection === 'Open Output' && this._outputChannel) {
+          this._outputChannel.show();
+        } else if (selection === 'Open Output') {
+          vscode.commands.executeCommand('workbench.action.output.toggleOutput');
+        }
+      });
+    }
+  }
+
+  private _handleOnboardingAction(payload: { action: string; timestamp: number; context?: Record<string, any> }): void {
+    const logMessage = `[Onboarding] User action: ${payload.action}`;
+    console.log(logMessage, payload.context);
+
+    if (this._outputChannel) {
+      this._outputChannel.appendLine(`${logMessage} ${payload.context ? JSON.stringify(payload.context) : ''}`);
+    }
+
+    // Optional: Send to telemetry service if available
+    this._telemetryService?.sendEvent('onboardingAction', {
+      action: payload.action,
+      ...payload.context
+    });
+  }
+
+  private async _handleAnalyzeWorkspace(): Promise<void> {
+    try {
+      this.sendMessageToWebview({
+        type: 'assistantMessage',
+        payload: {
+          id: Date.now().toString(),
+          role: 'assistant',
+          text: 'Analyzing workspace...',
+          timestamp: Date.now(),
+        }
+      });
+
+      const context = await this._chatService.analyzeWorkspace();
+
+      if (context) {
+        this.sendMessageToWebview({
+          type: 'workspaceAnalyzed',
+          context: context,
+          summary: `Analyzed workspace: ${context.fileCount} files collected.`
+        });
+      } else {
+        this.sendMessageToWebview({
+          type: 'assistantMessage',
+          payload: {
+            id: Date.now().toString(),
+            role: 'assistant',
+            text: 'Workspace analysis failed or no workspace open.',
+            timestamp: Date.now(),
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Workspace analysis failed:', error);
+      this.sendMessageToWebview({
+        type: 'error',
+        payload: {
+          error: error instanceof Error ? error.message : 'Unknown error during analysis',
+          retryable: false
+        }
+      });
     }
   }
 
@@ -803,10 +935,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       conversation.phasePlan = phaseManager.getActivePlan()!;
       await this._chatService.saveConversation(conversation);
 
-      // Send updated phase plan to webview
+      // Send updated phase plan
       this._sendPhasePlan(conversation.phasePlan);
 
-      // Send success notification
       this.sendMessageToWebview({
         type: 'phaseStatusUpdated',
         payload: {
@@ -816,17 +947,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
       });
 
-      this._telemetryService?.sendEvent('verifyPhase', { phaseId });
+      this._telemetryService?.sendEvent('verifyPhase', {
+        phaseId: phaseId
+      });
 
       this._sendPhaseProgress(conversation.metadata.id);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to verify phase';
+
+    } catch (error: unknown) {
+      console.error('[ChatViewProvider] Failed to verify phase:', error);
       this.sendMessageToWebview({
         type: 'error',
-        payload: { error: message, retryable: false }
+        payload: {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          retryable: false
+        }
       });
     }
   }
+
+
+
 
   private async _handleUpdateTaskStatus(
     phaseId: string,
@@ -853,9 +993,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this._sendPhasePlan(conversation.phasePlan);
 
       this._telemetryService?.sendEvent('updateTaskStatus', { phaseId, taskId, status });
-
       this._sendPhaseProgress(conversation.metadata.id);
-    } catch (error) {
+    } catch (error: unknown) {
+      console.error('[ChatViewProvider] Failed to update task status:', error);
       const message = error instanceof Error ? error.message : 'Failed to update task status';
       this.sendMessageToWebview({
         type: 'error',
@@ -863,6 +1003,110 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
     }
   }
+
+  private async _handleRunAndAnalyze(payload: { phaseId?: string; command?: string }): Promise<void> {
+    if (!this._view) return;
+
+    // Retrieve the active conversation and its phasePlan
+    const conversation = this._chatService.getActiveConversation();
+    if (!conversation || !conversation.phasePlan) {
+      this.sendMessageToWebview({
+        type: 'error',
+        payload: {
+          error: 'No active phase plan available. Please generate a plan first.',
+          retryable: false,
+        },
+      });
+      return;
+    }
+
+    try {
+      // Show progress in UI
+      this._view.webview.postMessage({
+        type: 'assistantMessage',
+        payload: {
+          id: `run-${Date.now()}`,
+          role: 'assistant',
+          text: `🔄 Executing command: \`${payload.command || 'default'}\`...`,
+          timestamp: Date.now()
+        }
+      });
+
+      // Execute command
+      const phaseManager = this._chatService.getPhaseManager();
+
+      // Set active plan so AI receives phase context
+      phaseManager.setActivePlan(conversation.phasePlan);
+
+      const result = await phaseManager.executeRunCommand(payload.command);
+
+      // Get AI provider for analysis
+      const activeProvider = this._chatService.registry.getActiveProvider();
+      if (!activeProvider) {
+        throw new Error('No active AI provider for analysis');
+      }
+
+      // Analyze with AI
+      const analysis = await phaseManager.analyzeTestOutputWithAI(result, activeProvider);
+
+      // Auto-verify phases if enabled and tests passed
+      const config = vscode.workspace.getConfiguration('junkrat.runAnalysis');
+      const autoVerify = config.get<boolean>('autoVerifyOnSuccess');
+
+      if (autoVerify && result.success && analysis.affectedPhases.length > 0) {
+        for (const phaseAnalysis of analysis.affectedPhases) {
+          if (phaseAnalysis.status === 'passed') {
+            try {
+              phaseManager.updatePhaseStatus(phaseAnalysis.phaseId, 'completed');
+              phaseManager.verifyPhase(phaseAnalysis.phaseId);
+            } catch (e) {
+              console.log(`Could not auto-verify phase ${phaseAnalysis.phaseId}:`, e);
+            }
+          }
+        }
+      }
+
+      // Sync changes back to conversation and save
+      const updatedPlan = phaseManager.getActivePlan();
+      if (updatedPlan) {
+        conversation.phasePlan = updatedPlan;
+        await this._chatService.saveConversation(conversation);
+
+        // Post updated plan and progress
+        this._sendPhasePlan(conversation.phasePlan);
+        this._sendPhaseProgress(conversation.metadata.id);
+      }
+
+      // Send results to webview
+      this._view.webview.postMessage({
+        type: 'runAnalysisComplete',
+        payload: {
+          ...result,
+          analysis
+        }
+      });
+
+      // Track telemetry
+      this._telemetryService?.sendEvent('runAnalysis', {
+        success: String(result.success),
+        duration: String(result.duration),
+        phasesAnalyzed: String(analysis.affectedPhases.length)
+      });
+
+    } catch (error) {
+      console.error('Run & Analyze failed:', error);
+      this._view?.webview.postMessage({
+        type: 'error',
+        payload: {
+          error: error instanceof Error ? error.message : 'Run analysis failed',
+          errorType: 'api_error',
+          retryable: true
+        }
+      });
+    }
+  }
+
+
 
   /**
    * Rename a conversation
@@ -950,7 +1194,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
 
     let errorType: ErrorMessage['payload']['errorType'] = 'api_error';
-    let suggestedActions: ErrorMessage['payload']['suggestedActions'] = [];
+    const suggestedActions: ErrorMessage['payload']['suggestedActions'] = [];
 
     if (aiError) {
       // Map AIError types to errorType
@@ -1432,17 +1676,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           <span id="dashboard-stats-verified">0/0 Verified</span>
           <span class="dashboard-label">Phase Progress</span>
         </div>
+        <div class="dashboard-actions"></div>
       </div>
       <div class="header-actions">
-        <!-- Reordered buttons: Clear -> New -> History -->
-        <button class="header-btn primary" id="clear-chat-btn" title="Clear Chat">
+        <!-- Reordered buttons: Analyze -> Clear -> New -> History -->
+        <button class="header-btn" id="analyze-workspace-btn" title="Analyze Workspace" aria-label="Analyze Workspace">
+          <span class="codicon codicon-briefcase"></span>
+          <span>Analyze</span>
+        </button>
+        <button class="header-btn primary" id="clear-chat-btn" title="Clear Chat (Ctrl+Shift+K)" aria-label="Clear chat (Ctrl+Shift+K)">
           <span class="codicon codicon-trash"></span>
+          <span>Clear</span>
         </button>
-        <button class="header-btn" id="new-chat-btn" title="New Chat">
+        <button class="header-btn" id="new-chat-btn" title="New Chat (Ctrl+Shift+N)" aria-label="New chat (Ctrl+Shift+N)">
           <span class="codicon codicon-add"></span>
+          <span>New</span>
         </button>
-        <button class="header-btn" id="history-btn" title="History">
+        <button class="header-btn" id="history-btn" title="History (Ctrl+Shift+H)" aria-label="View history (Ctrl+Shift+H)">
           <span class="codicon codicon-history"></span>
+          <span>History</span>
+        </button>
+        <button class="header-btn" id="analyze-workspace-btn" title="Analyze Workspace" aria-label="Analyze Workspace">
+          <span class="codicon codicon-telescope"></span>
+          <span>Analyze</span>
         </button>
       </div>
     </div>
@@ -1483,18 +1739,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       <div id="onboarding-wizard" style="display: none;">
         <div class="onboarding-content">
           <h2>Welcome to JunkRat! 🚀</h2>
-          <p>Let's set up your AI provider to start planning phases.</p>
+          <p class="onboarding-message">Let's set up your AI provider to start planning phases.</p>
           
           <div class="onboarding-options">
             <div class="onboarding-option recommended">
               <span class="codicon codicon-star-full"></span>
               <h3>Ollama (Recommended)</h3>
-              <p>Free, private, local AI models</p>
+              <p>Free, private, local AI models.</p>
+              <div class="onboarding-steps">
+                <ol>
+                    <li>Install from <a href="#" onclick="vscode.postMessage({type: 'openExternalLink', payload: {url: 'https://ollama.com'}})">ollama.com</a></li>
+                    <li>Run <code>ollama pull llama3</code> in terminal</li>
+                    <li>Click <strong>Test Connection</strong> below</li>
+                </ol>
+              </div>
               <button class="onboarding-btn" data-action="install-ollama">
-                Install Ollama
+                <span class="codicon codicon-download"></span> Open Download Page
               </button>
               <button class="onboarding-btn secondary" data-action="test-ollama">
-                Test Connection
+                <span class="codicon codicon-debug-disconnect"></span> Test Connection
               </button>
             </div>
             
@@ -1503,7 +1766,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               <h3>Google Gemini</h3>
               <p>Cloud-based AI with API key</p>
               <button class="onboarding-btn" data-action="config-gemini">
-                Enter API Key
+                <span class="codicon codicon-key"></span> Enter API Key
               </button>
             </div>
             
@@ -1512,7 +1775,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               <h3>Other Providers</h3>
               <p>OpenRouter, Custom endpoints</p>
               <button class="onboarding-btn" data-action="config-other">
-                Configure
+                <span class="codicon codicon-settings-gear"></span> Configure
               </button>
             </div>
           </div>
@@ -1520,6 +1783,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           <button class="onboarding-refresh" data-action="refresh-status">
             <span class="codicon codicon-refresh"></span>
             Refresh Status
+          </button>
+          
+          <button class="onboarding-skip-btn" data-action="skip-onboarding">
+            <span class="codicon codicon-arrow-right"></span>
+            Skip & Start Chatting
           </button>
         </div>
       </div>
@@ -1542,6 +1810,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             <span>Get a battle-tested phase plan ready for any AI builder</span>
           </div>
         </div>
+        
+        <button class="empty-state-config-btn" id="empty-state-config-btn" aria-label="Configure AI provider" title="Configure AI Provider">
+          <span class="codicon codicon-settings-gear"></span>
+          <span>Configure AI Provider</span>
+        </button>
+
         <p class="empty-state-cta">Drop your idea below and let's make magic happen ✨</p>
       </div>
     </div>
@@ -1786,5 +2060,48 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       type: 'phaseProgress',
       payload: progress,
     });
+  }
+
+  private async _handleScanGitProgress(dryRun: boolean = false): Promise<void> {
+    const conversation = this._chatService.getActiveConversation();
+    if (!conversation || !conversation.phasePlan) {
+      this.sendMessageToWebview({
+        type: 'error',
+        payload: {
+          error: 'No active phase plan to scan against.',
+          retryable: false
+        }
+      });
+      return;
+    }
+
+    try {
+      const phaseManager = new PhaseManager();
+      phaseManager.setActivePlan(conversation.phasePlan);
+
+      const { updated, results } = await phaseManager.autoUpdateFromGit(dryRun);
+
+      if (updated > 0) {
+        conversation.phasePlan = phaseManager.getActivePlan()!;
+        await this._chatService.saveConversation(conversation);
+        this._sendPhasePlan(conversation.phasePlan);
+        this._sendPhaseProgress(conversation.metadata.id);
+      }
+
+      this.sendMessageToWebview({
+        type: 'gitScanComplete',
+        payload: { updated, results }
+      });
+
+    } catch (error) {
+      console.error('Git scan failed:', error);
+      this.sendMessageToWebview({
+        type: 'error',
+        payload: {
+          error: error instanceof Error ? error.message : 'Git scan failed',
+          retryable: true
+        }
+      });
+    }
   }
 }

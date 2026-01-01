@@ -970,6 +970,104 @@ export function getChatScript(): string {
         setState();
       }
 
+      function addButtonFeedback(button, action, options = {}) {
+        const { timeout = 3000, successMessage = null, errorMessage = null } = options;
+        
+        // Haptic feedback
+        if (navigator.vibrate) {
+          navigator.vibrate([50]);
+        }
+        
+        // Add loading state
+        button.classList.add('loading');
+        button.disabled = true;
+        const originalHTML = button.innerHTML;
+        const loadingIcon = '<span class="codicon codicon-loading codicon-modifier-spin"></span>';
+        // Preserve structure roughly but show loading text
+        const textContent = button.textContent || 'Loading...';
+        button.innerHTML = loadingIcon + ' ' + textContent.trim();
+        
+        // Execute action
+        let result;
+        try {
+            result = typeof action === 'function' ? action() : Promise.resolve();
+        } catch (e) {
+            result = Promise.reject(e);
+        }
+        
+        const actionPromise = (result && typeof result.then === 'function') 
+            ? result 
+            : new Promise(resolve => setTimeout(resolve, 500)); // Add minimal delay for visual feedback if sync
+        
+        // Revert after timeout or action completion
+        const revert = () => {
+          button.classList.remove('loading');
+          button.disabled = false;
+          button.innerHTML = originalHTML;
+        };
+        
+        const timeoutId = setTimeout(revert, timeout);
+        
+        actionPromise
+          .then(() => {
+            clearTimeout(timeoutId);
+            revert();
+            if (successMessage) {
+              renderSuccessBubble(successMessage);
+            }
+          })
+          .catch((error) => {
+            clearTimeout(timeoutId);
+            revert();
+            if (errorMessage) {
+              renderErrorBubble(errorMessage || error.message);
+            }
+          });
+      }
+
+      function renderSuccessBubble(message) {
+        const bubble = {
+          id: Date.now().toString(),
+          role: 'system',
+          text: '✅ ' + message,
+          timestamp: Date.now()
+        };
+        messages.push(bubble);
+        renderMessage(bubble);
+        setTimeout(() => {
+          const bubbleEl = document.querySelector(\`[data-message-id="\${bubble.id}"]\`);
+          if (bubbleEl) {
+              bubbleEl.style.transition = 'opacity 0.5s';
+              bubbleEl.style.opacity = '0';
+              setTimeout(() => { 
+                  bubbleEl.remove();
+                  // Ideally remove from messages array if desired, but visual removal is sufficient for now
+              }, 500);
+          }
+        }, 3000);
+      }
+
+      function renderErrorBubble(message) {
+        const bubble = {
+          id: Date.now().toString(),
+          role: 'system',
+          text: '❌ ' + message,
+          timestamp: Date.now()
+        };
+        messages.push(bubble);
+        renderMessage(bubble);
+        setTimeout(() => {
+          const bubbleEl = document.querySelector(\`[data-message-id="\${bubble.id}"]\`);
+          if (bubbleEl) {
+              bubbleEl.style.transition = 'opacity 0.5s';
+              bubbleEl.style.opacity = '0';
+              setTimeout(() => { 
+                  bubbleEl.remove();
+              }, 500);
+          }
+        }, 5000); // Slightly longer timeout for errors
+      }
+
       function showPhaseGenerationIndicator() {
         if (phaseGenerationIndicator) {
           return;
@@ -1190,10 +1288,18 @@ export function getChatScript(): string {
 
         const activeProvider = providers.find((provider) => provider.id === activeProviderId);
         const isAvailable = activeProvider ? activeProvider.available : false;
+        
+        // Update status for active provider
         updateProviderStatus(activeProviderId, !!isAvailable);
         
-        if (isAvailable) {
+        // Hide onboarding if ANY provider is available
+        const anyAvailable = providers.some(p => p.available);
+        if (anyAvailable) {
           hideOnboardingWizard();
+        }
+        
+        if (isAvailable) {
+          // If active is available, also process queue
           processMessageQueue();
         }
         setState();
@@ -1244,6 +1350,23 @@ export function getChatScript(): string {
         }
 
         setState();
+      }
+
+      function showSuccessBubble(message) {
+        const bubble = document.createElement('div');
+        bubble.className = 'success-bubble';
+        bubble.innerHTML = '<span class="codicon codicon-check"></span><span>' + message + '</span>';
+        // Prepend to show at the top
+        if (messagesContainer.firstChild) {
+            messagesContainer.insertBefore(bubble, messagesContainer.firstChild);
+        } else {
+            messagesContainer.appendChild(bubble);
+        }
+        
+        setTimeout(() => {
+          bubble.classList.add('fade-out');
+          setTimeout(() => bubble.remove(), 300);
+        }, 3000);
       }
 
       /**
@@ -1300,9 +1423,29 @@ export function getChatScript(): string {
             updateProviderList(message.payload.providers, message.payload.activeProviderId);
             break;
 
+
           case 'providerStatusUpdate':
-            if (message.payload && typeof message.payload.available !== 'undefined') {
-              updateProviderStatus(message.payload.providerId || activeProviderId, message.payload.available);
+            if (message.payload) {
+              // Handle full provider list update
+              if (message.payload.providers) {
+                console.log('[Provider Update] Received full provider list');
+                updateProviderList(message.payload.providers, message.payload.activeProviderId || activeProviderId);
+              }
+              // Handle legacy single status update (if sent from elsewhere)
+              else if (typeof message.payload.available !== 'undefined') {
+                console.log('[Provider Status Update]', message.payload.providerId, message.payload.available ? 'Available' : 'Unavailable');
+                updateProviderStatus(message.payload.providerId || activeProviderId, message.payload.available);
+              }
+              
+              // Show success feedback if provider just became available
+              if (message.payload.available) {
+                if (typeof showSuccessBubble === 'function') {
+                    const name = message.payload.providerId || 'Provider';
+                    // Don't show generic bubble for initial load, only interesting updates? 
+                    // For now, keep it simple.
+                     if (message.payload.providerId) showSuccessBubble(message.payload.providerId + ' is ready!');
+                }
+              }
             }
             break;
 
@@ -1868,7 +2011,12 @@ export function getChatScript(): string {
       // Event listeners
       sendButton.addEventListener('click', () => {
         try {
-          sendMessage();
+          addButtonFeedback(sendButton, () => {
+            sendMessage();
+          }, {
+            timeout: 2000,
+            errorMessage: 'Failed to send message'
+          });
         } catch (error) {
           console.error('Send button failed:', error);
         }
@@ -1882,25 +2030,24 @@ export function getChatScript(): string {
         const action = actionBtn.dataset.action;
         const providerId = actionBtn.dataset.providerId;
         
-        switch (action) {
-          case 'retry':
-            safePostMessage({ type: 'retryLastRequest' });
-            break;
-            
-          case 'switchProvider':
-            if (providerId) {
-               safePostMessage({ type: 'switchProviderAndRetry', payload: { providerId } });
-            }
-            break;
-            
-          case 'refreshModels':
-             safePostMessage({ type: 'refreshModels', payload: { providerId } });
-             break;
-             
-          case 'openSettings':
-             safePostMessage({ type: 'openSettings' });
-             break;
-        }
+        addButtonFeedback(actionBtn, () => {
+          switch (action) {
+            case 'retry':
+              safePostMessage({ type: 'retryLastRequest' });
+              break;
+            case 'switchProvider':
+              if (providerId) {
+                safePostMessage({ type: 'switchProviderAndRetry', payload: { providerId } });
+              }
+              break;
+            case 'refreshModels':
+              safePostMessage({ type: 'refreshModels', payload: { providerId } });
+              break;
+            case 'openSettings':
+              safePostMessage({ type: 'openSettings' });
+              break;
+          }
+        }, { timeout: 3000, successMessage: 'Action completed' });
       });
 
       if (providerSelect) {
@@ -1968,7 +2115,9 @@ export function getChatScript(): string {
       if (newChatBtn) {
         newChatBtn.addEventListener('click', () => {
           try {
-            safePostMessage({ type: 'newChat', payload: {} });
+            addButtonFeedback(newChatBtn, () => {
+              safePostMessage({ type: 'newChat', payload: {} });
+            }, { timeout: 2000, successMessage: 'New chat started' });
           } catch (error) {
             console.error('New Chat button failed:', error);
           }
@@ -1988,10 +2137,12 @@ export function getChatScript(): string {
       if (clearChatBtn) {
         clearChatBtn.addEventListener('click', () => {
           try {
-             showConfirmDialog('Clear Chat', 'Are you sure you want to clear all messages?', 'Clear All', () => {
-                  clearMessages();
-                  safePostMessage({ type: 'clearChat', payload: {} });
-             });
+            showConfirmDialog('Clear Chat', 'Are you sure?', 'Clear All', () => {
+              addButtonFeedback(clearChatBtn, () => {
+                clearMessages();
+                safePostMessage({ type: 'clearChat', payload: {} });
+              }, { timeout: 2000, successMessage: 'Chat cleared' });
+            });
           } catch (error) {
             console.error('Clear chat button failed:', error);
           }
@@ -2055,9 +2206,9 @@ export function getChatScript(): string {
               const target = e.target;
               if (target.closest('.scan-git-btn')) {
                 const btn = target.closest('.scan-git-btn');
-                btn.disabled = true;
-                btn.innerHTML = '<span class="codicon codicon-loading codicon-modifier-spin"></span> Scanning...';
-                safePostMessage({ type: 'scanGitProgress', payload: { dryRun: false } });
+                addButtonFeedback(btn, () => {
+                    safePostMessage({ type: 'scanGitProgress', payload: { dryRun: false } });
+                }, { timeout: 5000, successMessage: 'Git scan started' });
                 e.preventDefault();
                 return;
               }
@@ -2281,64 +2432,49 @@ function renderWorkspaceAnalysis(payload) {
           if (!target) return;
           
           // Handle onboarding buttons (delegation)
+          // Handle onboarding buttons (delegation)
           const btn = target.closest('.onboarding-btn, .onboarding-refresh, .onboarding-skip-btn');
           if (btn) {
               const action = btn.dataset.action;
-              
-              // Log the action to extension
               console.log('Onboarding: ' + action + ' clicked');
-              safePostMessage({ 
-                type: 'onboardingAction', 
-                payload: { 
-                  action: action, 
-                  timestamp: Date.now(),
-                  context: { buttonLabel: btn.innerText }
-                } 
-              });
-
-              if (action === 'install-ollama') {
-                  safePostMessage({ 
-                      type: 'openExternalLink', 
-                      payload: { url: 'https://ollama.com' } 
-                  });
-              } else if (action === 'test-ollama') {
+              
+              addButtonFeedback(btn, () => {
+                safePostMessage({ 
+                  type: 'onboardingAction', 
+                  payload: { action, timestamp: Date.now(), context: { buttonLabel: btn.innerText } } 
+                });
+    
+                if (action === 'install-ollama') {
+                  safePostMessage({ type: 'openExternalLink', payload: { url: 'https://ollama.com' } });
+                } else if (action === 'test-ollama') {
                   safePostMessage({ type: 'testOllamaConnection' });
-              } else if (action === 'config-gemini') {
-                  safePostMessage({ 
-                      type: 'openSettings', 
-                      payload: { settingId: 'junkrat.gemini.apiKey' } 
-                  });
-              } else if (action === 'config-other') {
-                  safePostMessage({ 
-                      type: 'openSettings', 
-                      payload: { settingId: 'activeProvider' } 
-                  });
-              } else if (action === 'refresh-status') {
+                } else if (action === 'test-gemini') {
+                  safePostMessage({ type: 'testProvider', payload: { providerId: 'gemini' } });
+                } else if (action === 'test-openrouter') {
+                  safePostMessage({ type: 'testProvider', payload: { providerId: 'openrouter' } });
+                } else if (action === 'test-custom') {
+                   safePostMessage({ type: 'testProvider', payload: { providerId: 'custom' } });
+                } else if (action === 'config-gemini') {
+                  safePostMessage({ type: 'openSettings', payload: { settingId: 'junkrat.gemini.apiKey' } });
+                } else if (action === 'config-other') {
+                  safePostMessage({ type: 'openSettings', payload: { settingId: 'activeProvider' } });
+                } else if (action === 'refresh-status') {
                   safePostMessage({ type: 'requestProviderList' });
-                  // Also trigger a manual check via testOllamaConnection concept or just provider list
-                  // Provider list refresh triggers nothing if status unchanged in backend, 
-                  // but checking connection explicitly is better.
-                  safePostMessage({ type: 'testOllamaConnection' }); 
-              } else if (action === 'skip-onboarding') {
+                  safePostMessage({ type: 'testOllamaConnection' });
+                } else if (action === 'skip-onboarding') {
                   hideOnboardingWizard();
                   if (messageInput) {
-                      messageInput.disabled = false;
-                      messageInput.focus();
+                    messageInput.disabled = false;
+                    messageInput.focus();
                   }
-                  
                   // Add visual feedback
-                  const skipMessage = {
-                      id: Date.now().toString(),
-                      role: 'system',
-                      text: '💡 Tip: You can configure AI providers anytime from the settings to unlock full functionality.',
-                      timestamp: Date.now()
-                  };
-                  messages.push(skipMessage);
-                  renderMessage(skipMessage);
-                  
-                  // Persist that we've seen onboarding? 
-                  // Ideally extension should know, but for now this is session based or until reload.
-              }
+                  renderSuccessBubble('You can configure providers later in settings.');
+                }
+              }, {
+                timeout: 5000,
+                successMessage: action === 'test-ollama' ? 'Connection test initiated' : null,
+                errorMessage: 'Action failed, please try again'
+              });
           }
         } catch (error) {
           console.error('Onboarding click handler failed:', error);

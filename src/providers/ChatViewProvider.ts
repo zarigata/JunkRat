@@ -47,6 +47,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly _chatService: ChatService,
     private readonly _configService: ConfigurationService,
     private readonly _telemetryService: TelemetryService,
+    private readonly _providerHealthService?: any, // ProviderHealthService (optional for now)
+    private readonly _uiStateManager?: any, // UIStateManager (optional for now)
+    private readonly _autonomousExecutionService?: any, // AutonomousExecutionService (optional for now)
     private readonly _outputChannel?: vscode.OutputChannel
   ) { }
 
@@ -609,16 +612,53 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       case 'testOllamaConnection': {
         const isAvailable = await this._chatService.checkProviderAvailability('ollama');
+
+        // Send explicit status update to webview
+        const updatedProviders = await this._getProviderStatuses();
+        const updateMessage: ExtensionMessage = {
+          type: 'providerStatusUpdate',
+          payload: {
+            providerId: 'ollama',
+            available: isAvailable,
+            providers: updatedProviders
+          }
+        };
+        this.sendMessageToWebview(updateMessage);
+
         if (isAvailable) {
-          vscode.window.showInformationMessage('Verifying connection...');
+          vscode.window.showInformationMessage('✅ Ollama: Ready and available!', 'Open Chat')
+            .then(selection => {
+              if (selection === 'Open Chat') {
+                vscode.commands.executeCommand('junkrat.openChat');
+              }
+            });
           // Trigger a refresh which will update the UI
           await this._checkProviderAndRefresh();
+          // Also refresh models since it's available
+          await this._sendModelList();
         } else {
+          const action = await vscode.window.showErrorMessage(
+            '❌ Ollama: Not available. Please install or start Ollama.',
+            'Install Ollama',
+            'Troubleshoot'
+          );
+
+          if (action === 'Install Ollama') {
+            vscode.env.openExternal(vscode.Uri.parse('https://ollama.com'));
+          } else if (action === 'Troubleshoot') {
+            // Basic troubleshooting
+            vscode.window.showInformationMessage('Run "ollama serve" in your terminal to start Ollama.');
+          }
+
           // Force a check/fail
           await this._checkProviderAndRefresh();
         }
         break;
       }
+
+      case 'testProvider':
+        await this._handleTestProvider(message.payload?.providerId);
+        break;
 
       case 'openExternalLink':
         if (message.payload.url) {
@@ -638,6 +678,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       case 'runAndAnalyze':
         await this._handleRunAndAnalyze(message.payload);
+        break;
+
+      case 'toggleAutonomousMode':
+        await this._handleToggleAutonomousMode(message.payload.enabled, message.payload.prompt);
+        break;
+
+      case 'stopAutonomousMode':
+        await this._handleStopAutonomousMode();
+        break;
+
+      case 'pauseAutonomousMode':
+        await this._handlePauseAutonomousMode();
+        break;
+
+      case 'resumeAutonomousMode':
+        await this._handleResumeAutonomousMode();
+        break;
+
+      case 'requestProviderStatus':
+        await this._handleRequestProviderStatus();
         break;
     }
   }
@@ -967,6 +1027,65 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 
 
+
+  private async _handleTestProvider(providerId?: string): Promise<void> {
+    if (!providerId) return;
+
+    // Check availability
+    const isAvailable = await this._chatService.checkProviderAvailability(providerId);
+
+    // Send explicit status update to webview
+    const updatedProviders = await this._getProviderStatuses();
+    const updateMessage: ExtensionMessage = {
+      type: 'providerStatusUpdate',
+      payload: {
+        providerId,
+        available: isAvailable,
+        providers: updatedProviders
+      }
+    };
+    this.sendMessageToWebview(updateMessage);
+
+    if (isAvailable) {
+      vscode.window.showInformationMessage(`✅ ${providerId}: Ready and available!`);
+
+      // If it returns true, it means it's configured and working
+      await this._checkProviderAndRefresh();
+
+      // If it's Ollama, refresh models too
+      if (providerId === 'ollama') {
+        await this._sendModelList();
+      }
+    } else {
+      let message = `❌ ${providerId}: Not available.`;
+      const actions: string[] = ['Configure', 'Troubleshoot'];
+
+      if (providerId === 'ollama') {
+        message = '❌ Ollama: Not available. Is it running?';
+        actions.unshift('Install Ollama');
+      } else if (providerId === 'gemini') {
+        message = '❌ Gemini: Connection failed. Check your API key.';
+      } else if (providerId === 'openrouter') {
+        message = '❌ OpenRouter: Connection failed. Check your API key.';
+      }
+
+      const selection = await vscode.window.showErrorMessage(message, ...actions);
+
+      if (selection === 'Install Ollama') {
+        vscode.env.openExternal(vscode.Uri.parse('https://ollama.com'));
+      } else if (selection === 'Configure') {
+        await this._configService.openSettings(`junkrat.${providerId}`);
+      } else if (selection === 'Troubleshoot') {
+        if (providerId === 'ollama') {
+          vscode.window.showInformationMessage('Make sure Ollama is installed and running (run "ollama serve").');
+        } else {
+          vscode.env.openExternal(vscode.Uri.parse('https://github.com/Start-Automating/JunkRat/blob/main/README.md'));
+        }
+      }
+
+      await this._checkProviderAndRefresh();
+    }
+  }
 
   private async _handleUpdateTaskStatus(
     phaseId: string,
@@ -1434,13 +1553,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     await this._sendConfigurationStatus();
   }
 
-  private async _sendProviderList(): Promise<void> {
-    if (!this._view) {
-      return;
-    }
-
+  private async _getProviderStatuses(): Promise<any[]> {
     const providerIds = ProviderFactory.getSupportedProviders() as ProviderId[];
-    const activeProviderId = this._configService.getActiveProviderId();
 
     const providers = await Promise.all(
       providerIds.map(async (providerId) => {
@@ -1458,11 +1572,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       })
     );
 
-    const message: ProviderListMessage = {
-      type: 'providerList',
+    return providers;
+  }
+
+
+  private async _sendProviderList(): Promise<void> {
+    if (!this._view) {
+      return;
+    }
+
+    const providers = await this._getProviderStatuses();
+    const activeProviderId = this._configService.getActiveProviderId();
+
+    const message: ExtensionMessage = {
+      type: 'providerStatusUpdate',
       payload: {
         providers,
         activeProviderId,
+        providerId: activeProviderId, // Backward compatibility
+        available: providers.find(p => p.id === activeProviderId)?.available ?? false // Backward compatibility
       },
     };
 
@@ -1768,6 +1896,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               <button class="onboarding-btn" data-action="config-gemini">
                 <span class="codicon codicon-key"></span> Enter API Key
               </button>
+              <button class="onboarding-btn secondary" data-action="test-gemini">
+                <span class="codicon codicon-debug-disconnect"></span> Test Connection
+              </button>
             </div>
             
             <div class="onboarding-option">
@@ -1776,6 +1907,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               <p>OpenRouter, Custom endpoints</p>
               <button class="onboarding-btn" data-action="config-other">
                 <span class="codicon codicon-settings-gear"></span> Configure
+              </button>
+               <button class="onboarding-btn secondary" data-action="test-openrouter">
+                <span class="codicon codicon-debug-disconnect"></span> Test OpenRouter
               </button>
             </div>
           </div>
@@ -2096,12 +2230,175 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } catch (error) {
       console.error('Git scan failed:', error);
       this.sendMessageToWebview({
-        type: 'error',
         payload: {
           error: error instanceof Error ? error.message : 'Git scan failed',
           retryable: true
         }
       });
+    }
+  }
+
+  /**
+   * Handle toggle autonomous mode
+   */
+  private async _handleToggleAutonomousMode(enabled: boolean, prompt?: string): Promise<void> {
+    if (!this._autonomousExecutionService) {
+      vscode.window.showWarningMessage('Autonomous mode is not available');
+      return;
+    }
+
+    if (enabled) {
+      if (!prompt) {
+        vscode.window.showErrorMessage('Please provide a prompt to start autonomous mode');
+        return;
+      }
+
+      try {
+        // Start autonomous execution
+        this._log('Starting TOILET SURF autonomous mode...');
+
+        // Set up progress listener
+        const progressDisposable = this._autonomousExecutionService.onDidUpdateProgress((progress: any) => {
+          this.sendMessageToWebview({
+            type: 'autonomousProgress',
+            payload: progress
+          });
+        });
+
+        // Set up completion listener
+        const completeDisposable = this._autonomousExecutionService.onDidComplete((result: any) => {
+          this.sendMessageToWebview({
+            type: 'autonomousComplete',
+            payload: result
+          });
+          progressDisposable.dispose();
+          completeDisposable.dispose();
+        });
+
+        // Start execution (non-blocking)
+        void this._autonomousExecutionService.startAutonomousExecution(prompt);
+
+        this.sendMessageToWebview({
+          type: 'assistantMessage',
+          payload: {
+            id: Date.now().toString(),
+            role: 'assistant',
+            text: '🚀 TOILET SURF mode activated! Starting autonomous execution...',
+            timestamp: Date.now()
+          }
+        });
+
+      } catch (error) {
+        this._log(`Error starting autonomous mode: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        vscode.window.showErrorMessage(`Failed to start autonomous mode: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    } else {
+      // Stop autonomous execution
+      this._autonomousExecutionService.stopExecution();
+      this._log('TOILET SURF autonomous mode stopped');
+    }
+  }
+
+  /**
+   * Handle stop autonomous mode
+   */
+  private async _handleStopAutonomousMode(): Promise<void> {
+    if (!this._autonomousExecutionService) {
+      return;
+    }
+
+    this._autonomousExecutionService.stopExecution();
+    this._log('Autonomous execution stopped by user');
+
+    this.sendMessageToWebview({
+      type: 'assistantMessage',
+      payload: {
+        id: Date.now().toString(),
+        role: 'assistant',
+        text: '⏹️ TOILET SURF mode stopped.',
+        timestamp: Date.now()
+      }
+    });
+  }
+
+  /**
+   * Handle pause autonomous mode
+   */
+  private async _handlePauseAutonomousMode(): Promise<void> {
+    if (!this._autonomousExecutionService) {
+      return;
+    }
+
+    this._autonomousExecutionService.pauseExecution();
+    this._log('Autonomous execution paused');
+
+    this.sendMessageToWebview({
+      type: 'assistantMessage',
+      payload: {
+        id: Date.now().toString(),
+        role: 'assistant',
+        text: '⏸️ TOILET SURF mode paused.',
+        timestamp: Date.now()
+      }
+    });
+  }
+
+  /**
+   * Handle resume autonomous mode
+   */
+  private async _handleResumeAutonomousMode(): Promise<void> {
+    if (!this._autonomousExecutionService) {
+      return;
+    }
+
+    this._autonomousExecutionService.resumeExecution();
+    this._log('Autonomous execution resumed');
+
+    this.sendMessageToWebview({
+      type: 'assistantMessage',
+      payload: {
+        id: Date.now().toString(),
+        role: 'assistant',
+        text: '▶️ TOILET SURF mode resumed.',
+        timestamp: Date.now()
+      }
+    });
+  }
+
+  /**
+   * Handle request for provider status
+   */
+  private async _handleRequestProviderStatus(): Promise<void> {
+    if (!this._providerHealthService) {
+      // Fallback to existing provider list
+      await this._sendProviderList();
+      return;
+    }
+
+    try {
+      const statuses = await this._providerHealthService.detectAvailableProviders();
+
+      this.sendMessageToWebview({
+        type: 'providerHealthStatus',
+        payload: { statuses }
+      });
+
+    } catch (error) {
+      this._log(`Error getting provider status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Log helper method
+   */
+  private _log(message: string): void {
+    const timestamp = new Date().toISOString();
+    const logMessage = `[${timestamp}] [ChatViewProvider] ${message}`;
+
+    console.log(logMessage);
+
+    if (this._outputChannel) {
+      this._outputChannel.appendLine(logMessage);
     }
   }
 }

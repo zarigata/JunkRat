@@ -11,6 +11,9 @@ import { ConversationManager } from './services/ConversationManager';
 import { StorageService } from './services/StorageService';
 import { TelemetryService } from './services/TelemetryService';
 import { OllamaProvider } from './providers/OllamaProvider';
+import { ProviderHealthService } from './services/ProviderHealthService';
+import { UIStateManager } from './services/UIStateManager';
+import { AutonomousExecutionService } from './services/AutonomousExecutionService';
 
 export async function activate(context: vscode.ExtensionContext) {
   // Create Output Channel immediately
@@ -51,12 +54,26 @@ export async function activate(context: vscode.ExtensionContext) {
     // Create ChatService
     const chatService = new ChatService(providerRegistry, phaseManager, agentService, conversationManager);
 
-    // Register chat view provider with ChatService
+    // Create new services for multi-provider support and autonomous mode
+    const providerHealthService = new ProviderHealthService(providerRegistry);
+    const uiStateManager = new UIStateManager();
+    const autonomousExecutionService = new AutonomousExecutionService(chatService, uiStateManager, outputChannel);
+
+    // Start provider health monitoring
+    providerHealthService.startHealthMonitoring();
+
+    // Register services for disposal
+    context.subscriptions.push(providerHealthService, uiStateManager, autonomousExecutionService);
+
+    // Register chat view provider with ChatService and new services
     const chatProvider = new ChatViewProvider(
       context.extensionUri,
       chatService,
       configurationService,
       telemetryService,
+      providerHealthService,
+      uiStateManager,
+      autonomousExecutionService,
       outputChannel
     );
     const chatViewRegistration = vscode.window.registerWebviewViewProvider(

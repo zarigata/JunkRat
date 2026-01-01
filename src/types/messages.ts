@@ -366,6 +366,64 @@ export interface GitScanCompleteMessage {
   };
 }
 
+export interface ToggleAutonomousModeMessage {
+  type: 'toggleAutonomousMode';
+  payload: {
+    enabled: boolean;
+    prompt?: string;
+  };
+}
+
+export interface StopAutonomousModeMessage {
+  type: 'stopAutonomousMode';
+}
+
+export interface PauseAutonomousModeMessage {
+  type: 'pauseAutonomousMode';
+}
+
+export interface ResumeAutonomousModeMessage {
+  type: 'resumeAutonomousMode';
+}
+
+export interface AutonomousProgressMessage {
+  type: 'autonomousProgress';
+  payload: {
+    currentIteration: number;
+    maxIterations: number;
+    currentPhaseId?: string;
+    currentTaskId?: string;
+    completedTasks: number;
+    totalTasks: number;
+    status: 'running' | 'paused' | 'stopped' | 'completed' | 'error';
+  };
+}
+
+export interface AutonomousCompleteMessage {
+  type: 'autonomousComplete';
+  payload: {
+    success: boolean;
+    iterations: number;
+  };
+}
+
+export interface ProviderHealthStatusMessage {
+  type: 'providerHealthStatus';
+  payload: {
+    statuses: Array<{
+      id: string;
+      available: boolean;
+      lastChecked: number;
+      error?: string;
+      capabilities?: {
+        streaming: boolean;
+        vision: boolean;
+        localModel: boolean;
+      };
+    }>;
+  };
+}
+
 export type WebviewMessage =
   | SendMessageMessage
   | ReadyMessage
@@ -414,9 +472,12 @@ export type WebviewMessage =
   | ExportAllConversationsMessage
   | AnalyzeWorkspaceMessage
   | ScanGitProgressMessage
-  | ScanGitProgressMessage
   | RunAndAnalyzeMessage
   | OnboardingActionMessage
+  | ToggleAutonomousModeMessage
+  | StopAutonomousModeMessage
+  | PauseAutonomousModeMessage
+  | ResumeAutonomousModeMessage
   | WebviewErrorMessage;
 
 export interface WebviewErrorMessage {
@@ -539,18 +600,21 @@ export interface ConfigurationStatusMessage {
 export interface ProviderStatusUpdateMessage {
   type: 'providerStatusUpdate';
   payload: {
-    providers: Array<{
+    // Full update fields
+    providers?: Array<{
       id: string;
       name: string;
       enabled: boolean;
       available: boolean;
-      validation: {
-        valid: boolean;
-        errors: string[];
-        warnings: string[];
-      };
     }>;
-    validationResults: Record<
+    activeProviderId?: string;
+
+    // Legacy/Single update fields
+    providerId?: string;
+    available?: boolean;
+
+    // Detailed validation results (optional)
+    validationResults?: Record<
       string,
       {
         valid: boolean;
@@ -559,9 +623,6 @@ export interface ProviderStatusUpdateMessage {
         available: boolean;
       }
     >;
-  } | {
-    providerId: string;
-    available: boolean;
   };
 }
 
@@ -679,7 +740,10 @@ export type ExtensionMessage =
   | NextActionSuggestionsMessage
   | WorkspaceAnalyzedMessage
   | GitScanCompleteMessage
-  | RunAnalysisCompleteMessage;
+  | RunAnalysisCompleteMessage
+  | AutonomousProgressMessage
+  | AutonomousCompleteMessage
+  | ProviderHealthStatusMessage;
 
 export interface PhaseProgressMessage {
   type: 'phaseProgress';

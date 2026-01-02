@@ -205,6 +205,13 @@ export async function activate(context: vscode.ExtensionContext) {
       })
     );
 
+    context.subscriptions.push(
+      vscode.commands.registerCommand('junkrat.viewLogs', () => {
+        outputChannel.show();
+        outputChannel.appendLine('[COMMAND] View Logs command invoked');
+      })
+    );
+
     // Auto-open settings on first activation if no provider is configured
     if (isFirstActivation) {
       const config = configurationService.getConfiguration();

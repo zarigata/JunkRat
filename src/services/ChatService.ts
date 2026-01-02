@@ -61,12 +61,15 @@ export class ChatService {
     const attemptedProviders = new Set<string>();
     let currentProviderId = providerId;
 
-    // Graceful degradation: If no providers are configured, return helpful mock response
+    // Check if any providers are configured
     if (this._registry.listProviders().length === 0) {
-      const mockResponse = "⚠️ No AI providers are configured. Please configure a provider in Settings to start chatting.\n\n**Quick Setup:**\n- **Ollama (Recommended)**: Install Ollama locally and it will auto-connect\n- **Gemini**: Add your Google API key in settings\n- **OpenRouter**: Add your OpenRouter API key\n\nClick the settings icon in the chat header to get started.";
-
-      this._conversationHistory.push({ role: 'assistant', content: mockResponse });
-      return mockResponse;
+      throw new AIError(
+        'No AI providers configured. Please configure at least one provider (Ollama recommended) in settings.',
+        'NO_PROVIDER',
+        'system',
+        undefined,
+        false
+      );
     }
 
     // eslint-disable-next-line no-constant-condition
@@ -169,6 +172,17 @@ export class ChatService {
     const attemptedProviders = new Set<string>();
     let currentProviderId = providerId;
     let hasReceivedData = false;
+
+    // Check if any providers are configured
+    if (this._registry.listProviders().length === 0) {
+      throw new AIError(
+        'No AI providers configured. Please configure at least one provider (Ollama recommended) in settings.',
+        'NO_PROVIDER',
+        'system',
+        undefined,
+        false
+      );
+    }
 
     // eslint-disable-next-line no-constant-condition
     while (true) {

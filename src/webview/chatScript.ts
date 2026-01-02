@@ -41,6 +41,19 @@ export function getChatScript(): string {
       let currentPhaseMarkdown = '';
       let messageQueue = [];
       
+      // TOILET SURF autonomous mode state
+      let toiletSurfEnabled = false;
+      let autonomousProgress = null;
+      let currentUIPhase = 'IDLE';
+      
+      // Provider health state
+      let providerHealthStatuses = [];
+      let providers = [];
+      
+      // Screen state management
+      let currentScreen = 'idle'; // 'setup', 'idle', 'active'
+      let mockModeEnabled = false;
+      
       // Restore previous state
       const previousState = vscode.getState();
       if (previousState) {
@@ -65,6 +78,9 @@ export function getChatScript(): string {
         if (previousState.currentPhaseMarkdown) {
           currentPhaseMarkdown = previousState.currentPhaseMarkdown;
         }
+        if (previousState.mockModeEnabled !== undefined) {
+          mockModeEnabled = previousState.mockModeEnabled;
+        }
       }
       
       // DOM references
@@ -84,6 +100,8 @@ export function getChatScript(): string {
       const modelSelectorContainer = document.getElementById('model-selector-container');
       const modelSelect = document.getElementById('model-select');
       const modelStatus = document.getElementById('model-status');
+      const mockModeToggle = document.getElementById('mock-mode-toggle');
+      const mockModeContainer = document.getElementById('mock-mode-toggle-container');
 
       const phaseGenerationIndicator = null;
 
@@ -97,6 +115,11 @@ export function getChatScript(): string {
           }
         };
       }
+      
+      // Ensure input is always enabled
+      if (messageInput) {
+        messageInput.disabled = false;
+      }
 
       function setState() {
         vscode.setState({
@@ -107,7 +130,10 @@ export function getChatScript(): string {
           conversationMetadata,
           currentPhasePlan,
           currentPhaseMarkdown,
-          workspaceContext // Persist workspace context
+          currentPhasePlan,
+          currentPhaseMarkdown,
+          workspaceContext, // Persist workspace context
+          mockModeEnabled
         });
       }
 
@@ -693,8 +719,8 @@ export function getChatScript(): string {
          const p = document.createElement('p');
          p.textContent = message;
          
-         const actions = document.createElement('div');
-         actions.className = 'modal-actions';
+         const confirmActions = document.createElement('div');
+         confirmActions.className = 'modal-actions';
          
          const closeModal = () => {
              document.removeEventListener('keydown', handleKeydown);
@@ -728,12 +754,12 @@ export function getChatScript(): string {
          confirmBtn.textContent = confirmText || 'Confirm';
          confirmBtn.onclick = handleConfirm;
          
-         actions.appendChild(cancelBtn);
-         actions.appendChild(confirmBtn);
+         confirmActions.appendChild(cancelBtn);
+         confirmActions.appendChild(confirmBtn);
          
          content.appendChild(h3);
          content.appendChild(p);
-         content.appendChild(actions);
+         content.appendChild(confirmActions);
          overlay.appendChild(content);
          
          document.body.appendChild(overlay);
@@ -758,8 +784,8 @@ export function getChatScript(): string {
         input.placeholder = 'Describe the new phase...';
         input.rows = 4;
         
-        const actions = document.createElement('div');
-        actions.className = 'modal-actions';
+        const addPhaseActions = document.createElement('div');
+        addPhaseActions.className = 'modal-actions';
         
         const cancelBtn = document.createElement('button');
         cancelBtn.textContent = 'Cancel';
@@ -784,12 +810,12 @@ export function getChatScript(): string {
           }
         };
         
-        actions.appendChild(cancelBtn);
-        actions.appendChild(confirmBtn);
+        addPhaseActions.appendChild(cancelBtn);
+        addPhaseActions.appendChild(confirmBtn);
         
         content.appendChild(header);
         content.appendChild(input);
-        content.appendChild(actions);
+        content.appendChild(addPhaseActions);
         modal.appendChild(content);
         
         document.body.appendChild(modal);
@@ -828,16 +854,8 @@ export function getChatScript(): string {
         descInput.value = currentDescription;
         descInput.rows = 4;
         
-        const actions = document.createElement('div');
-        actions.className = 'modal-actions';
-        
-        const cancelBtn = document.createElement('button');
-        cancelBtn.textContent = 'Cancel';
-        cancelBtn.className = 'modal-btn secondary';
-        cancelBtn.onclick = () => modal.remove();
-        
-        const actions = document.createElement('div');
-        actions.className = 'modal-actions';
+        const editPhaseActions = document.createElement('div');
+        editPhaseActions.className = 'modal-actions';
         
         const cancelBtn = document.createElement('button');
         cancelBtn.textContent = 'Cancel';
@@ -867,15 +885,15 @@ export function getChatScript(): string {
           }
         };
         
-        actions.appendChild(cancelBtn);
-        actions.appendChild(confirmBtn);
+        editPhaseActions.appendChild(cancelBtn);
+        editPhaseActions.appendChild(confirmBtn);
         
         content.appendChild(header);
         content.appendChild(titleLabel);
         content.appendChild(titleInput);
         content.appendChild(descLabel);
         content.appendChild(descInput);
-        content.appendChild(actions);
+        content.appendChild(editPhaseActions);
         modal.appendChild(content);
         
         document.body.appendChild(modal);
@@ -1159,36 +1177,78 @@ export function getChatScript(): string {
       /**
        * socket for sending messages to backend, with queue support
        */
-      function attemptSend(text) {
-         const activeProvider = providers.find(p => p.id === activeProviderId);
-         
-         // If providers exist but active one is unavailable, queue the message
-         if (providers.length > 0 && (!activeProvider || !activeProvider.available)) {
+       function attemptSend(text) {
+          const activeProvider = providers.find(p => p.id === activeProviderId);
+          
+          // Case 1: No providers configured at all
+          if (providers.length === 0) {
              if (!messageQueue) messageQueue = [];
              messageQueue.push(text);
-             console.log('Message queued due to unavailable provider');
+             console.log('Message queued: No providers configured');
+             
+             // Immediate mock response for no-provider case
+             const noProviderMock = "👋 Got it! I'd love to help, but I need an AI provider configured first.\\n\\n**Quick Setup (takes 2 minutes):**\\n\\n🌟 **Ollama (Recommended)** - Free & Private\\n   • Download from ollama.com\\n   • Run \`ollama pull llama3\`\\n   • I'll auto-connect!\\n\\n☁️ **Gemini** - Cloud-based\\n   • Get free API key from ai.google.dev\\n   • Add it in settings\\n\\n⚙️ Click the **Config** button in the chat header to get started!\\n\\nYour message is saved - once configured, I'll give you an epic phase plan! 🚀";
+             
+             // Render the mock response immediately
+             const mockMsg = {
+                id: Date.now().toString(),
+                role: 'assistant',
+                text: noProviderMock,
+                timestamp: Date.now()
+             };
+             messages.push(mockMsg);
+             renderMessage(mockMsg);
+             setState();
+             
+             // Show onboarding wizard as well to help them
+             showOnboardingWizard(null, true); 
              return;
-         }
-         
-         // Otherwise (available OR no providers configured), send immediately
-         // Sending when no providers configured triggers the helpful fallback in ConversationManager
-         safePostMessage({
-           type: 'sendMessage',
-           payload: { text: text }
-         });
-      }
+          }
+
+          // Case 2: Providers exist but active one unavailable AND Mock Mode NOT enabled
+          if (!mockModeEnabled && (!activeProvider || !activeProvider.available)) {
+              if (!messageQueue) messageQueue = [];
+              messageQueue.push(text);
+              console.log('Message queued: Active provider unavailable');
+              return;
+          }
+          
+          // Case 3: Ready to send (Provider available OR Mock Mode enabled)
+          safePostMessage({
+            type: 'sendMessage',
+            payload: { 
+                text: text, 
+                mockMode: mockModeEnabled 
+            }
+          });
+       }
 
       function processMessageQueue() {
-          if (!messageQueue || messageQueue.length === 0) return;
-          
-          const activeProvider = providers.find(p => p.id === activeProviderId);
-          if (activeProvider && activeProvider.available) {
-              // Send all queued messages
-              while (messageQueue.length > 0) {
-                  const text = messageQueue.shift();
-                  attemptSend(text);
-              }
+        if (!messageQueue || messageQueue.length === 0) return;
+        
+        const activeProvider = providers.find(p => p.id === activeProviderId);
+        // Flush queue if provider available OR mock mode is enabled
+        if ((activeProvider && activeProvider.available) || mockModeEnabled) {
+          // Show notification about flushing queue if needed
+          /*
+          if (messageQueue.length > 0) {
+             // Optional: showSuccessBubble(`Processing ${ messageQueue.length } queued message(s)...`);
           }
+          */
+          
+          // Send all queued messages
+          while (messageQueue.length > 0) {
+            const text = messageQueue.shift();
+            // Use safePostMessage directly to avoid circular logic
+             safePostMessage({
+              type: 'sendMessage',
+              payload: { 
+                text: text,
+                mockMode: mockModeEnabled 
+              }
+            });
+          }
+        }
       }
 
       /**
@@ -1247,25 +1307,27 @@ export function getChatScript(): string {
       }
 
       function updateProviderStatus(providerId, available) {
-        if (!providerStatus) {
+        if (!providerStatus) return;
+
+        if (mockModeEnabled) {
+          providerStatus.className = 'provider-status mock-mode';
+          providerStatus.innerHTML = `
+    < span class="codicon codicon-beaker" > </span>
+      < span > Mock Mode Active </span>
+        `;
           return;
         }
 
         const provider = providers.find((p) => p.id === providerId);
         const providerName = provider ? provider.name : providerId;
 
-        providerStatus.classList.remove('available', 'unavailable', 'checking');
+        providerStatus.classList.remove('available', 'unavailable', 'checking', 'mock-mode');
         const iconClass = available ? 'codicon-check' : 'codicon-error';
         providerStatus.classList.add(available ? 'available' : 'unavailable');
-        providerStatus.innerHTML = \`
-          <span class="codicon \${iconClass}"></span>
-          <span>\${available ? 'Available' : 'Unavailable'} · \${providerName}</span>
-        \`;
-
-        if (available) {
-          hideOnboardingWizard();
-          processMessageQueue();
-        }
+        providerStatus.innerHTML = `
+        < span class="codicon ${iconClass}" > </span>
+          < span > ${ available ? 'Available' : 'Unavailable' } · ${ providerName } </span>
+            `;
       }
 
       function updateProviderList(providerList, activeId) {
@@ -1292,14 +1354,31 @@ export function getChatScript(): string {
         // Update status for active provider
         updateProviderStatus(activeProviderId, !!isAvailable);
         
-        // Hide onboarding if ANY provider is available
+        // Show/hide mock mode toggle based on provider availability
         const anyAvailable = providers.some(p => p.available);
+        if (mockModeContainer) {
+          // Show only when no providers are available
+          mockModeContainer.style.display = anyAvailable ? 'none' : 'flex';
+          
+          // If we are in mock mode but providers came online, maybe we should auto-disable?
+          // For now, let's leave it manual as per plan, but if queue flushing happens, it checks mockMode.
+          // The plan says "If mock mode was enabled, it should be disabled automatically" in Testing Checklist item 3.
+          // Let's implement that auto-disable if safe.
+          if (anyAvailable && mockModeEnabled) {
+             mockModeEnabled = false;
+             if (mockModeToggle) mockModeToggle.checked = false;
+             showSuccessBubble('Provider available - Mock Mode disabled');
+             setState();
+          }
+        }
+
+        // Hide onboarding if ANY provider is available
         if (anyAvailable) {
           hideOnboardingWizard();
         }
         
-        if (isAvailable) {
-          // If active is available, also process queue
+        if (isAvailable || mockModeEnabled) {
+          // If active is available OR mock mode, process queue
           processMessageQueue();
         }
         setState();
@@ -1715,8 +1794,8 @@ export function getChatScript(): string {
           info.appendChild(title);
           info.appendChild(meta);
 
-          const actions = document.createElement('div');
-          actions.className = 'conversation-actions';
+          const itemActions = document.createElement('div');
+          itemActions.className = 'conversation-actions';
 
           const loadBtn = document.createElement('button');
           loadBtn.className = 'conversation-action-btn';
@@ -1776,13 +1855,13 @@ export function getChatScript(): string {
             }
           };
 
-          actions.appendChild(loadBtn);
-          actions.appendChild(renameBtn);
-          actions.appendChild(exportBtn);
-          actions.appendChild(deleteBtn);
+          itemActions.appendChild(loadBtn);
+          itemActions.appendChild(renameBtn);
+          itemActions.appendChild(exportBtn);
+          itemActions.appendChild(deleteBtn);
 
           item.appendChild(info);
-          item.appendChild(actions);
+          item.appendChild(itemActions);
 
           listContainer.appendChild(item);
         });
@@ -1938,7 +2017,7 @@ export function getChatScript(): string {
 
           if (action === 'copy') {
             const formattedTask = formatTaskForExecution(task, phaseTitle);
-            copyToClipboard(formattedTask.replace(/\\n/g, '\n'), 'Task', taskItem);
+            copyToClipboard(formattedTask.replace(/\\\\n/g, '\\n'), 'Task', taskItem);
           } else if (['roo-code', 'windsurf', 'aider', 'cursor', 'continue'].includes(action)) {
             safePostMessage({
               type: 'handoffTaskToTool',
@@ -2076,6 +2155,29 @@ export function getChatScript(): string {
             });
           } catch (error) {
             console.error('Settings button failed:', error);
+          }
+        });
+      }
+
+      if (mockModeToggle) {
+        mockModeToggle.addEventListener('change', (event) => {
+          try {
+            mockModeEnabled = event.target.checked;
+            setState();
+            
+            // Allow queue flush if enabled
+            if (mockModeEnabled) {
+               processMessageQueue();
+               showSuccessBubble('Mock Mode enabled - AI responses simulated');
+            } else {
+               showSuccessBubble('Mock Mode disabled - using real AI provider');
+            }
+            // Update status UI
+            const activeProvider = providers.find((p) => p.id === activeProviderId);
+            updateProviderStatus(activeProviderId, activeProvider ? activeProvider.available : false);
+            
+          } catch (error) {
+            console.error('Mock mode toggle failed:', error);
           }
         });
       }
@@ -2515,6 +2617,101 @@ function renderWorkspaceAnalysis(payload) {
           console.error('Failed to report promise rejection to extension:', e);
         }
       });
+
+      function updateAutonomousProgress(progress) {
+        autonomousProgress = progress;
+        if (toiletSurfIteration) {
+          toiletSurfIteration.textContent = progress.currentIteration + '/' + progress.maxIterations;
+        }
+        if (toiletSurfTasks) {
+          toiletSurfTasks.textContent = progress.completedTasks + '/' + progress.totalTasks + ' tasks';
+        }
+        if (toiletSurfProgressFill && progress.totalTasks > 0) {
+          const percentage = (progress.completedTasks / progress.totalTasks) * 100;
+          toiletSurfProgressFill.style.width = percentage + '%';
+        }
+        if (toiletSurfCombo && progress.comboMultiplier) {
+          if (progress.comboMultiplier > 1.0) {
+            toiletSurfCombo.style.display = 'inline';
+            toiletSurfCombo.textContent = '🔥 ' + progress.comboMultiplier.toFixed(1) + 'x';
+          } else {
+            toiletSurfCombo.style.display = 'none';
+          }
+        }
+        if (achievementsDisplay && progress.achievements && progress.achievements.length > 0) {
+          achievementsDisplay.style.display = 'flex';
+          achievementsDisplay.innerHTML = progress.achievements.map(function(achievement) {
+            return '<span class=\"achievement-badge\">' + achievement + '</span>';
+          }).join('');
+        }
+      }
+
+      function handleAutonomousComplete(result) {
+        if (toiletSurfToggle) {
+          toiletSurfToggle.checked = false;
+          toiletSurfEnabled = false;
+        }
+        if (toiletSurfProgress) {
+          toiletSurfProgress.style.display = 'none';
+        }
+        const message = result.success 
+          ? '🎉 TOILET SURF completed successfully in ' + result.iterations + ' iterations!'
+          : '⚠️ TOILET SURF stopped after ' + result.iterations + ' iterations.';
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message assistant';
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        const textDiv = document.createElement('div');
+        textDiv.className = 'message-text';
+        textDiv.textContent = message;
+        contentDiv.appendChild(textDiv);
+        messageDiv.appendChild(contentDiv);
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        transitionToScreen('idle');
+      }
+
+      function updateUIPhaseIndicator(phase) {
+        currentUIPhase = phase;
+        if (uiPhaseIndicator) {
+          uiPhaseIndicator.textContent = phase;
+          uiPhaseIndicator.className = 'ui-phase-indicator phase-' + phase.toLowerCase();
+        }
+      }
+
+      function updateProviderHealthStatus(payload) {
+        providerHealthStatuses = payload.statuses || [];
+      }
+
+      function transitionToScreen(screenName) {
+        currentScreen = screenName;
+        const onboardingWizard = document.getElementById('onboarding-wizard');
+        const emptyState = document.getElementById('empty-state');
+        const toiletSurfContainer = document.getElementById('toilet-surf-container');
+        const toiletSurfProgress = document.getElementById('toilet-surf-progress');
+        const inputContainer = document.querySelector('.input-container');
+        const phaseDashboard = document.getElementById('phase-dashboard');
+        if (onboardingWizard) onboardingWizard.style.display = 'none';
+        if (emptyState) emptyState.style.display = 'none';
+        if (toiletSurfProgress) toiletSurfProgress.style.display = 'none';
+        if (screenName === 'setup') {
+          if (onboardingWizard) onboardingWizard.style.display = 'flex';
+          if (toiletSurfContainer) toiletSurfContainer.style.display = 'none';
+          if (inputContainer) inputContainer.style.display = 'none';
+        } else if (screenName === 'idle') {
+          if (messages.length === 0 && emptyState) {
+            emptyState.style.display = 'flex';
+          }
+          if (toiletSurfContainer) toiletSurfContainer.style.display = 'flex';
+          if (inputContainer) inputContainer.style.display = 'flex';
+          if (phaseDashboard && currentPhasePlan) {
+            phaseDashboard.style.display = 'flex';
+          }
+        } else if (screenName === 'active') {
+          if (toiletSurfContainer) toiletSurfContainer.style.display = 'flex';
+          if (toiletSurfProgress) toiletSurfProgress.style.display = 'flex';
+          if (inputContainer) inputContainer.style.display = 'none';
+        }
 
     }) ();
   `;

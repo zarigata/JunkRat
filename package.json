@@ -331,6 +331,11 @@
         "command": "junkrat.testConnection",
         "title": "JunkRat: Test Connection",
         "icon": "$(pulse)"
+      },
+      {
+        "command": "junkrat.viewLogs",
+        "title": "JunkRat: View Logs",
+        "icon": "$(output)"
       }
     ],
     "menus": {

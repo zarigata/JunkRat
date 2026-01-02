@@ -29,6 +29,16 @@ import { ErrorMessage } from '../types/messages';
 /**
  * Provides the chat webview for the JunkRat sidebar
  */
+/**
+ * Logging Conventions:
+ * - [POLLING] Provider availability checks and polling lifecycle
+ * - [MESSAGE_SENT] Extension -> Webview messages
+ * - [MESSAGE_RECEIVED] Webview -> Extension messages
+ * - [COMMAND] User-invoked commands
+ * - [ACTIVATION ERROR] Extension activation failures
+ * 
+ * View logs: Run "JunkRat: View Logs" command or check Output > JunkRat
+ */
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _messageListener?: vscode.Disposable;
@@ -112,10 +122,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _startProviderPolling(): void {
     if (this._pollingInterval) {
       clearInterval(this._pollingInterval);
+      this._outputChannel?.appendLine('[POLLING] Stopping previous polling interval');
     }
 
     // Poll with dynamic interval (start at 10s)
     const interval = 10000 * this._pollingBackoffMultiplier;
+    this._outputChannel?.appendLine(`[POLLING] Starting polling with interval: ${interval}ms (backoff multiplier: ${this._pollingBackoffMultiplier})`);
 
     this._pollingInterval = setInterval(async () => {
       await this._checkProviderAndRefresh();
@@ -145,6 +157,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (!this._view) {
       return;
     }
+    this._outputChannel?.appendLine('[POLLING] Starting provider check...');
 
     // Check if we exceeded max attempts
     if (this._pollingAttempts >= this._maxPollingAttempts) {
@@ -152,6 +165,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         clearInterval(this._pollingInterval);
         this._pollingInterval = undefined;
       }
+      this._outputChannel?.appendLine(`[POLLING] Max attempts (${this._maxPollingAttempts}) reached, stopping polling`);
 
       if (!this._lastProviderAvailable) {
         const message: NoProvidersReadyMessage = {
@@ -162,11 +176,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           }
         };
         this.sendMessageToWebview(message);
+        this._outputChannel?.appendLine('[POLLING] Sent final "no providers ready" message to webview');
       }
       return;
     }
 
     this._pollingAttempts++;
+    this._outputChannel?.appendLine(`[POLLING] Attempt ${this._pollingAttempts}/${this._maxPollingAttempts}`);
 
     // Early warning at 30 seconds (3 attempts)
     if (this._pollingAttempts === 3 && !this._lastProviderAvailable) {
@@ -179,21 +195,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
       };
       this.sendMessageToWebview(message);
+
+      vscode.window.showWarningMessage(
+        'No AI providers detected after 30 seconds. Configure a provider now?',
+        'Open Settings',
+        'Dismiss'
+      ).then(selection => {
+        if (selection === 'Open Settings') {
+          this._configService.openSettings('junkrat.activeProvider');
+        }
+      });
+      await this._configService.openSettings('junkrat.activeProvider');
+      this._outputChannel?.appendLine('[POLLING] 30s timeout reached, showing configuration prompt');
     }
 
     // Implement backoff after 10 attempts (100 seconds)
     if (this._pollingAttempts === 10) {
       this._pollingBackoffMultiplier = 3; // Increase to 30s
+      this._outputChannel?.appendLine('[POLLING] Increasing backoff multiplier to 3 (30s interval) after 10 attempts');
       // Restart polling with new interval
+      this._outputChannel?.appendLine('[POLLING] Restarting polling with new interval');
       this._startProviderPolling();
       return;
     }
 
     const activeProviderId = this._configService.getActiveProviderId();
     const isAvailable = await this._chatService.checkProviderAvailability(activeProviderId);
+    this._outputChannel?.appendLine(`[POLLING] Provider ${activeProviderId} availability: ${isAvailable}`);
 
     // If availability changed, refresh the UI
     if (isAvailable !== this._lastProviderAvailable) {
+      this._outputChannel?.appendLine(`[POLLING] Provider availability changed from ${this._lastProviderAvailable} to ${isAvailable}`);
       this._lastProviderAvailable = isAvailable;
 
       // Reset polling state on success
@@ -219,6 +251,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     // Always send provider status to keep webview synchronized
+    this._outputChannel?.appendLine('[POLLING] Sending provider list update to webview');
     await this._sendProviderList();
   }
 
@@ -399,7 +432,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    */
   public sendMessageToWebview(message: ExtensionMessage): void {
     if (this._view) {
+      if (this._outputChannel) {
+        const messageType = message.type;
+        const payloadSummary = JSON.stringify((message as any).payload || {}).substring(0, 200);
+        this._outputChannel.appendLine(`[MESSAGE_SENT] Type: ${messageType}, Payload: ${payloadSummary}...`);
+      }
       this._view.webview.postMessage(message);
+      this._outputChannel?.appendLine('[MESSAGE_SENT] Successfully posted to webview');
     }
   }
 
@@ -407,6 +446,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    * Handles messages received from the webview
    */
   private async _handleMessage(message: WebviewMessage): Promise<void> {
+    if (this._outputChannel) {
+      const messageType = message.type;
+      const payloadSummary = JSON.stringify((message as any).payload || {}).substring(0, 200);
+      this._outputChannel.appendLine(`[MESSAGE_RECEIVED] Type: ${messageType}, Payload: ${payloadSummary}...`);
+    }
     switch (message.type) {
       case 'webviewError':
         this._handleWebviewError(message.payload);
@@ -424,11 +468,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       case 'sendMessage': {
         const userText = message.payload.text;
+        const mockMode = (message.payload as any).mockMode || false;
         this._lastUserMessage = userText; // Store for retry
         console.log('User message:', userText);
 
         // Show thinking indicator (optional)
         this._sendThinkingIndicator();
+
+        if (mockMode) {
+          // Send mock response immediately
+          const mockResponse = "🤖 **[Mock Mode]** This is a simulated response. Your idea sounds interesting! In real mode, I would:\n\n1. Ask clarifying questions about your requirements\n2. Analyze your workspace context\n3. Generate a detailed phase plan with 5-50 phases\n4. Provide task breakdowns for each phase\n\nDisable Mock Mode and configure a provider to get real AI assistance!";
+
+          this.sendMessageToWebview({
+            type: 'assistantMessage',
+            payload: {
+              id: Date.now().toString(),
+              role: 'assistant',
+              text: mockResponse,
+              timestamp: Date.now(),
+            },
+          });
+          break;
+        }
 
         try {
           // Call ChatService to get AI response
@@ -1141,7 +1202,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     try {
       // Show progress in UI
-      this._view.webview.postMessage({
+      this.sendMessageToWebview({
         type: 'assistantMessage',
         payload: {
           id: `run-${Date.now()}`,
@@ -1197,7 +1258,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
 
       // Send results to webview
-      this._view.webview.postMessage({
+      this.sendMessageToWebview({
         type: 'runAnalysisComplete',
         payload: {
           ...result,
@@ -1214,7 +1275,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     } catch (error) {
       console.error('Run & Analyze failed:', error);
-      this._view?.webview.postMessage({
+      this.sendMessageToWebview({
         type: 'error',
         payload: {
           error: error instanceof Error ? error.message : 'Run analysis failed',
@@ -1780,7 +1841,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource} data:; img-src ${webview.cspSource} https: data:; script-src 'nonce-${nonce}';">
   <title>JunkRat Chat</title>
   <link rel="stylesheet" href="${codiconsUri}">
   <style nonce="${nonce}">
@@ -1792,7 +1853,39 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div class="chat-header">
       <div class="header-title">
         <span>JunkRat</span>
+        <span class="ui-phase-indicator" id="ui-phase-indicator" title="Current UI Phase">IDLE</span>
       </div>
+      
+      <!-- TOILET SURF Autonomous Mode Toggle -->
+      <div class="toilet-surf-container" id="toilet-surf-container">
+        <div class="toilet-surf-toggle">
+          <input type="checkbox" id="toilet-surf-toggle" class="toggle-checkbox" />
+          <label for="toilet-surf-toggle" class="toggle-label">
+            <span class="codicon codicon-rocket"></span>
+            <span>TOILET SURF</span>
+          </label>
+        </div>
+        <div class="toilet-surf-progress" id="toilet-surf-progress" style="display: none;">
+          <div class="progress-info">
+            <span id="toilet-surf-iteration">0/50</span>
+            <span id="toilet-surf-tasks">0/0 tasks</span>
+            <span id="toilet-surf-combo" class="combo-indicator" style="display: none;">🔥 1.0x</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="toilet-surf-progress-fill" style="width: 0%"></div>
+          </div>
+          <div class="toilet-surf-controls">
+            <button class="control-btn" id="toilet-surf-pause" title="Pause">
+              <span class="codicon codicon-debug-pause"></span>
+            </button>
+            <button class="control-btn" id="toilet-surf-stop" title="Stop">
+              <span class="codicon codicon-debug-stop"></span>
+            </button>
+          </div>
+        </div>
+        <div class="achievements-display" id="achievements-display" style="display: none;"></div>
+      </div>
+      
       <div class="phase-dashboard" id="phase-dashboard" style="display: none;">
         <div class="dashboard-chart">
           <svg viewBox="0 0 36 36">
@@ -1807,6 +1900,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         <div class="dashboard-actions"></div>
       </div>
       <div class="header-actions">
+        <div class="mock-mode-toggle" id="mock-mode-toggle-container" style="display: none;">
+          <input type="checkbox" id="mock-mode-toggle" class="toggle-checkbox" />
+          <label for="mock-mode-toggle" class="toggle-label" title="Enable Mock Mode to test without AI provider">
+            <span class="codicon codicon-beaker"></span>
+            <span>Mock</span>
+          </label>
+        </div>
         <!-- Reordered buttons: Analyze -> Clear -> New -> History -->
         <button class="header-btn" id="analyze-workspace-btn" title="Analyze Workspace" aria-label="Analyze Workspace">
           <span class="codicon codicon-briefcase"></span>
@@ -1823,10 +1923,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         <button class="header-btn" id="history-btn" title="History (Ctrl+Shift+H)" aria-label="View history (Ctrl+Shift+H)">
           <span class="codicon codicon-history"></span>
           <span>History</span>
-        </button>
-        <button class="header-btn" id="analyze-workspace-btn" title="Analyze Workspace" aria-label="Analyze Workspace">
-          <span class="codicon codicon-telescope"></span>
-          <span>Analyze</span>
         </button>
       </div>
     </div>
@@ -1876,7 +1972,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               <p>Free, private, local AI models.</p>
               <div class="onboarding-steps">
                 <ol>
-                    <li>Install from <a href="#" onclick="vscode.postMessage({type: 'openExternalLink', payload: {url: 'https://ollama.com'}})">ollama.com</a></li>
+                    <li>Install from <a href="https://ollama.com" target="_blank">ollama.com</a></li>
                     <li>Run <code>ollama pull llama3</code> in terminal</li>
                     <li>Click <strong>Test Connection</strong> below</li>
                 </ol>
@@ -1965,7 +2061,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div class="history-modal" id="history-modal" style="display: none;">
       <div class="history-modal-content">
         <div class="history-modal-header">
-          <h3>Conversation History</h3>
           <button class="history-close-btn" id="history-close-btn">
             <span class="codicon codicon-close"></span>
           </button>
@@ -2230,6 +2325,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } catch (error) {
       console.error('Git scan failed:', error);
       this.sendMessageToWebview({
+        type: 'error',
         payload: {
           error: error instanceof Error ? error.message : 'Git scan failed',
           retryable: true
